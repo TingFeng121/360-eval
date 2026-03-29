@@ -105,8 +105,20 @@ npm run build
 ├── public/            # 静态资源
 ├── .env.example       # 环境变量模板
 ├── .gitignore         # Git 忽略配置
+├── supabase-setup.sql # 数据库初始化脚本
 └── package.json       # 项目配置
 ```
+
+### 数据库初始化
+
+部署前需要先创建数据库表结构。运行 `supabase-setup.sql` 脚本：
+
+1. 登录 [Supabase Dashboard](https://supabase.com/dashboard)
+2. 进入你的项目 → **SQL Editor**
+3. 新建查询，复制 `supabase-setup.sql` 全部内容粘贴
+4. 点击 **Run** 执行
+
+详细说明请参考 [supabase-setup.sql](supabase-setup.sql) 文件。
 
 ### 使用指南
 

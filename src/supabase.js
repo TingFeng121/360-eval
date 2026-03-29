@@ -574,26 +574,31 @@ export const api = {
 
   // 修改密码
   async changePassword(id, oldPassword, newPassword) {
-    await requireAuth()
-    const session = await getLocalUser()
-    
-    // 非管理员需要验证原密码
-    if (session.user.role !== 'admin') {
-      // 验证原密码
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: `${session.user.username}@test.com`,
-        password: oldPassword
-      })
-      
-      if (signInError) {
-        throw new Error('原密码错误')
-      }
+    const { data: { session } } = await supabase.auth.getSession()
+    const email = session?.user?.email
+
+    if (!email) {
+      throw new Error('无法获取用户邮箱信息，请重新登录')
     }
 
-    // 更新密码 - 通过重新注册方式（有限制）
-    // 注意：前端无法直接修改密码，需要用户通过邮箱链接重置
-    // 这里简化处理：仅更新 profile，不修改 Auth 密码
-    return { message: '密码修改功能需要通过邮箱重置链接完成' }
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: oldPassword
+    })
+
+    if (signInError) {
+      throw new Error('原密码错误')
+    }
+
+    const { error: updateError } = await supabase.auth.updateUser({
+      password: newPassword
+    })
+
+    if (updateError) {
+      throw new Error('密码修改失败：' + updateError.message)
+    }
+
+    return { message: '密码修改成功' }
   },
 
   // 获取当前季度（带缓存）

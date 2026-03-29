@@ -5,22 +5,32 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.39.0",
-    "axios": "^1.6.5",
+    "axios": "^1.14.0",
     "echarts": "^5.4.3",
     "element-plus": "^2.5.1",
+    "express": "^5.2.1",
     "html2canvas": "^1.4.1",
     "jspdf": "^4.2.1",
+    "playwright": "^1.58.2",
     "vue": "^3.4.15",
     "vue-echarts": "^6.6.8",
     "vue-router": "^4.2.5",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^25.5.0",
     "@vitejs/plugin-vue": "^5.0.3",
-    "vite": "^5.0.11"
+    "@vue/test-utils": "^2.4.6",
+    "happy-dom": "^20.8.9",
+    "vite": "^5.0.11",
+    "vitest": "^4.1.2"
   }
 }
