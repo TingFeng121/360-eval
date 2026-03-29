@@ -1,5 +1,7 @@
 # 360度评价管理系统 / 360-Degree Evaluation System
 
+> 开源项目 | Open Source Project
+
 [中文](#中文) | [English](#english)
 
 ---
