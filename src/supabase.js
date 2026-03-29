@@ -610,11 +610,8 @@ export const api = {
 
     let period
     if (error || !data) {
-      // 直接返回2026年Q1，因为数据库中的任务是2026年的
-      console.log('getCurrentPeriod: no data in current_period table, returning 2026 Q1')
       period = { year: 2026, quarter: 1 }
     } else {
-      console.log('getCurrentPeriod: found data:', data)
       period = { year: data.year, quarter: data.quarter }
     }
     
