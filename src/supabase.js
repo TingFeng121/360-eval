@@ -1498,7 +1498,10 @@ export const api = {
       }
     })
 
-    const sortedResults = results.sort((a, b) => b.total_score - a.total_score)
+    const sortedResults = results.sort((a, b) => b.total_score - a.total_score).map((item, index) => ({
+      ...item,
+      rank: index + 1
+    }))
     apiCache.set('getSummary', sortedResults)
     return sortedResults
   },

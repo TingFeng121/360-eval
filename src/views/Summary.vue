@@ -37,22 +37,25 @@
       </div>
 
       <el-table :data="summaryData" border class="responsive-table summary-table ranking-desktop-table" :scrollbar-always-on="true" :row-class-name="getRowClassName">
-        <el-table-column prop="user_name" label="姓名" min-width="160" max-width="160" show-overflow-tooltip />
-        <el-table-column prop="department" label="部门" min-width="120" max-width="120" show-overflow-tooltip />
-        <el-table-column prop="self_score" label="自评得分" width="100">
+        <el-table-column prop="rank" label="排名" width="70" align="center">
+          <template #default="{ row }"><span class="rank-badge" :class="getRankClass(row.rank)">{{ row.rank }}</span></template>
+        </el-table-column>
+        <el-table-column prop="user_name" label="姓名" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="department" label="部门" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="self_score" label="自评" width="90" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.self_score === 0 }">{{ row.self_score?.toFixed(2) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column prop="peer_score" label="他评得分" width="100">
+        <el-table-column prop="peer_score" label="互评" width="90" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.peer_score === 0 }">{{ row.peer_score?.toFixed(2) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column prop="leader_score" label="领导评得分" width="100">
+        <el-table-column prop="leader_score" label="领导评" width="90" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.leader_score === 0 }">{{ row.leader_score?.toFixed(2) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column prop="total_score" label="综合得分" width="120" class-name="total-score-column">
+        <el-table-column prop="total_score" label="综合得分" width="110" align="center" class-name="total-score-column">
           <template #default="{ row }"><span class="total-score">{{ row.total_score?.toFixed(2) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="100" fixed="right">
-          <template #default="{ row }"><el-button size="small" class="radar-btn" @click="viewRadar(row.user_id)">查看雷达图</el-button></template>
+        <el-table-column label="操作" width="120" align="center" fixed="right">
+          <template #default="{ row }"><el-button size="small" type="primary" link class="radar-btn" @click="viewRadar(row.user_id)">查看雷达图</el-button></template>
         </el-table-column>
       </el-table>
     </div>
@@ -306,6 +309,13 @@ const getRowClassName = ({ row }) => {
     return 'zero-score-row'
   }
   return ''
+}
+
+const getRankClass = (rank) => {
+  if (rank === 1) return 'rank-gold'
+  if (rank === 2) return 'rank-silver'
+  if (rank === 3) return 'rank-bronze'
+  return 'rank-default'
 }
 
 const loadUsers = async () => {
@@ -650,6 +660,38 @@ onMounted(async () => {
   padding: 4px 10px;
 }
 
+.rank-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.rank-badge.rank-gold {
+  background: linear-gradient(135deg, #ffd700, #ffb700);
+  color: #fff;
+  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+}
+
+.rank-badge.rank-silver {
+  background: linear-gradient(135deg, #c0c0c0, #a8a8a8);
+  color: #fff;
+}
+
+.rank-badge.rank-bronze {
+  background: linear-gradient(135deg, #cd7f32, #b86b2a);
+  color: #fff;
+}
+
+.rank-badge.rank-default {
+  background: #f5f5f5;
+  color: #666;
+}
+
 .score-text {
   font-family: var(--font-sans);
   font-size: 14px;
@@ -682,34 +724,13 @@ onMounted(async () => {
 }
 
 .radar-btn {
-  background: none !important;
-  border: none !important;
-  color: var(--accent) !important;
-  padding: 4px 0 !important;
-  font-size: 13px;
-  position: relative;
-  text-decoration: none;
-}
-
-.radar-btn::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--accent);
-  opacity: 0.5;
-  transition: opacity 0.2s ease;
+  color: var(--el-color-primary) !important;
+  font-size: 14px;
+  font-weight: 500;
 }
 
 .radar-btn:hover {
-  color: #b8973f !important;
-  background: none !important;
-}
-
-.radar-btn:hover::after {
-  opacity: 1;
+  color: var(--el-color-primary-dark) !important;
 }
 
 /* ============================================
