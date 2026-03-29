@@ -574,31 +574,43 @@ export const api = {
 
   // 修改密码
   async changePassword(id, oldPassword, newPassword) {
-    const { data: { session } } = await supabase.auth.getSession()
-    const email = session?.user?.email
+    try {
+      const { data: { session } } = await supabase.auth.getSession()
+      const email = session?.user?.email
 
-    if (!email) {
-      throw new Error('无法获取用户邮箱信息，请重新登录')
+      if (!email) {
+        throw new Error('无法获取用户邮箱信息，请重新登录')
+      }
+
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: email,
+        password: oldPassword
+      })
+
+      if (signInError) {
+        if (signInError.message.includes('Invalid Refresh Token')) {
+          await supabase.auth.signOut()
+          throw new Error('登录状态已过期，请重新登录后再试')
+        }
+        throw new Error('原密码错误')
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPassword
+      })
+
+      if (updateError) {
+        throw new Error('密码修改失败：' + updateError.message)
+      }
+
+      return { message: '密码修改成功' }
+    } catch (err) {
+      if (err.message.includes('Invalid Refresh Token')) {
+        await supabase.auth.signOut()
+        throw new Error('登录状态已过期，请重新登录后再试')
+      }
+      throw err
     }
-
-    const { error: signInError } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: oldPassword
-    })
-
-    if (signInError) {
-      throw new Error('原密码错误')
-    }
-
-    const { error: updateError } = await supabase.auth.updateUser({
-      password: newPassword
-    })
-
-    if (updateError) {
-      throw new Error('密码修改失败：' + updateError.message)
-    }
-
-    return { message: '密码修改成功' }
   },
 
   // 获取当前季度（带缓存）
