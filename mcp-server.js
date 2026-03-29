@@ -11,7 +11,7 @@ async function initBrowser() {
   if (!browser) {
     browser = await chromium.launch({
       headless: true,
-      channel: 'chrome'
+      executablePath: 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe'
     })
   }
   return browser
