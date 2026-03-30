@@ -99,8 +99,12 @@
             <td class="td-status">
               <span
                 class="status-dot"
-                :class="task.status === 'completed' ? 'done' : 'pending'"
-                :title="task.status === 'completed' ? '已完成' : '待填写'"
+                :class="{
+                  done: task.status === 'completed',
+                  saved: task.status === 'saved',
+                  pending: task.status === 'pending'
+                }"
+                :title="task.status === 'completed' ? '已完成' : task.status === 'saved' ? '已暂存' : '待填写'"
               ></span>
             </td>
             <td class="td-actions">
@@ -117,7 +121,7 @@
                   v-else
                   class="icon-btn icon-btn-fill"
                   @click="goEvaluation(task.id)"
-                  title="去填写"
+                  :title="task.status === 'saved' ? '继续填写' : '去填写'"
                 >
                   <el-icon><Edit /></el-icon>
                 </el-button>
@@ -866,6 +870,10 @@ onMounted(async () => {
 
 .status-dot.pending {
   background: #ef4444;
+}
+
+.status-dot.saved {
+  background: #f97316;
 }
 
 .tag-active,

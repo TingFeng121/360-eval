@@ -1451,6 +1451,47 @@ export const api = {
     return { message: '评价提交成功' }
   },
 
+  // 暂存答案（不提交）
+  async saveAnswers(taskId, answers) {
+    await requireAuth()
+    const session = await getLocalUser()
+
+    const { data: task, error: taskError } = await supabase
+      .from('evaluation_tasks')
+      .select('*')
+      .eq('id', taskId)
+      .single()
+
+    if (taskError) throw taskError
+    if (task.reviewer_user_id !== session.user.id) {
+      throw new Error('只能填写分配给你的评价任务')
+    }
+
+    const answerRecords = answers.map(a => ({
+      task_id: taskId,
+      question_id: a.questionId,
+      score: a.score,
+      reason: a.reason || ''
+    }))
+
+    const { error: upsertError } = await supabase
+      .from('answers')
+      .upsert(answerRecords, { onConflict: 'task_id,question_id' })
+
+    if (upsertError) throw upsertError
+
+    const { error: updateError } = await supabase
+      .from('evaluation_tasks')
+      .update({ status: 'saved' })
+      .eq('id', taskId)
+
+    if (updateError) throw updateError
+
+    apiCache.clear('getTasks')
+
+    return { message: '评价已暂存' }
+  },
+
   // 获取权重配置（带缓存）
   async getWeight() {
     const cached = apiCache.get('getWeight')

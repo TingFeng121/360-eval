@@ -72,6 +72,9 @@
       </div>
 
       <div class="actions" v-if="!isViewMode">
+        <el-button size="large" @click="handleSave" :loading="saving">
+          暂存
+        </el-button>
         <el-button type="primary" size="large" @click="handleSubmit" :loading="submitting">
           提交评价
         </el-button>
@@ -95,6 +98,7 @@ const isViewMode = route.query.view === '1'
 
 const loading = ref(true)
 const submitting = ref(false)
+const saving = ref(false)
 const task = ref({})
 const questions = ref([])
 const answers = ref({})
@@ -173,6 +177,25 @@ const handleSubmit = async () => {
     ElMessage.error(err.message || '提交失败')
   } finally {
     submitting.value = false
+  }
+}
+
+const handleSave = async () => {
+  saving.value = true
+  try {
+    const answerList = Object.entries(answers.value).map(([questionId, data]) => ({
+      questionId: parseInt(questionId),
+      score: data.score,
+      reason: data.reason
+    }))
+
+    await api.saveAnswers(parseInt(taskId), answerList)
+    ElMessage.success('暂存成功')
+    router.push('/tasks')
+  } catch (err) {
+    ElMessage.error(err.message || '暂存失败')
+  } finally {
+    saving.value = false
   }
 }
 

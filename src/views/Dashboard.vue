@@ -360,38 +360,59 @@ const loadStats = async () => {
     const tasks = await api.getTasks({ period })
 
     stats.totalTasks = tasks?.length || 0
-    stats.completedTasks = completedReviewers
-    stats.pendingTasks = pendingReviewers
 
-    const reviewerStats = {}
+    // 已完成任务数（直接统计任务）
+    const completedTasks = tasks.filter(t => t.status === 'completed').length
+    const savedTasks = tasks.filter(t => t.status === 'saved').length
+    const pendingTasksCount = tasks.filter(t => t.status === 'pending').length
+
+    stats.completedTasks = completedTasks
+    stats.pendingTasks = pendingTasksCount + savedTasks
+
+    // 按评价类型统计
+    const selfTasks = tasks.filter(t => t.eval_type === 'self')
+    const peerTasks = tasks.filter(t => t.eval_type === 'peer')
+    const leaderTasks = tasks.filter(t => t.eval_type === 'leader')
+
+    // 按被评价人分组统计
+    const targetStats = {}
     tasks.forEach(task => {
-      const rid = task.reviewer_user_id
-      if (!reviewerStats[rid]) {
-        reviewerStats[rid] = { completed: 0, pending: 0 }
+      const tid = task.target_user_id
+      if (!targetStats[tid]) {
+        targetStats[tid] = { self: null, peer: null, leader: null }
       }
       if (task.status === 'completed') {
-        reviewerStats[rid].completed++
+        if (task.eval_type === 'self') targetStats[tid].self = 'completed'
+        if (task.eval_type === 'peer') targetStats[tid].peer = 'completed'
+        if (task.eval_type === 'leader') targetStats[tid].leader = 'completed'
+      } else if (task.status === 'saved') {
+        if (task.eval_type === 'self' && targetStats[tid].self !== 'completed') targetStats[tid].self = 'saved'
+        if (task.eval_type === 'peer' && targetStats[tid].peer !== 'completed') targetStats[tid].peer = 'saved'
+        if (task.eval_type === 'leader' && targetStats[tid].leader !== 'completed') targetStats[tid].leader = 'saved'
       } else {
-        reviewerStats[rid].pending++
+        if (task.eval_type === 'self' && targetStats[tid].self === null) targetStats[tid].self = 'pending'
+        if (task.eval_type === 'peer' && targetStats[tid].peer === null) targetStats[tid].peer = 'pending'
+        if (task.eval_type === 'leader' && targetStats[tid].leader === null) targetStats[tid].leader = 'pending'
       }
     })
 
+    // 统计完成状态的人数
     let completedReviewers = 0
     let inProgressReviewers = 0
     let notStartedReviewers = 0
-    let pendingReviewers = 0
 
-    Object.values(reviewerStats).forEach(stat => {
-      if (stat.completed > 0 && stat.pending === 0) {
+    Object.values(targetStats).forEach(stat => {
+      // 已完成：领导已完成 + 所有员工他评已完成 + 自评已完成
+      if (stat.leader === 'completed' && stat.self === 'completed' && stat.peer === 'completed') {
         completedReviewers++
-      } else if (stat.pending > 0 && stat.completed === 0) {
-        notStartedReviewers++
-      } else {
+      } else if (stat.self === 'pending' || stat.peer === 'pending' || stat.leader === 'pending' ||
+                 stat.self === 'saved' || stat.peer === 'saved' || stat.leader === 'saved') {
+        // 有暂存或待填写的归类为进行中
         inProgressReviewers++
+      } else {
+        notStartedReviewers++
       }
     })
-
-    pendingReviewers = notStartedReviewers + inProgressReviewers
 
     progressData.completed = completedReviewers
     progressData.inProgress = inProgressReviewers
@@ -409,7 +430,7 @@ const loadMyPendingTasks = async () => {
     const period = await api.getCurrentPeriod()
     const tasks = await api.getTasks({ period })
     myPendingTasks.value = tasks
-      .filter(t => t.reviewer_user_id === user.id && t.status === 'pending')
+      .filter(t => t.reviewer_user_id === user.id && (t.status === 'pending' || t.status === 'saved'))
   } catch (err) {
     console.error('加载待完成任务失败:', err)
   }
