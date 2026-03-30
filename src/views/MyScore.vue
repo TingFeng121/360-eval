@@ -2,7 +2,16 @@
   <div class="my-score-container">
     <div class="page-header">
       <h2>我的评分</h2>
-      <el-tag type="primary" v-if="period">Q{{ period.quarter }} {{ period.year }}</el-tag>
+      <div class="period-selector">
+        <el-select v-model="selectedPeriod" placeholder="选择季度" @change="loadData">
+          <el-option
+            v-for="p in availablePeriods"
+            :key="p.value"
+            :label="`Q${p.quarter} ${p.year}`"
+            :value="p.value"
+          />
+        </el-select>
+      </div>
     </div>
 
     <div v-if="loading" class="loading-state">
@@ -15,23 +24,18 @@
     </div>
 
     <div v-else-if="hasData" class="score-content">
-      <div class="score-summary">
-        <div class="summary-card total">
-          <div class="summary-label">综合评分</div>
-          <div class="summary-value">{{ displayScores.total_score }}</div>
+      <div class="score-overview">
+        <div class="score-cell total">
+          <div class="score-label">综合</div>
+          <div class="score-value">{{ displayScores.total_score }}</div>
         </div>
-        <div class="summary-card">
-          <div class="summary-label">自评</div>
-          <div class="summary-value">{{ displayScores.self_score }}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">他评</div>
-          <div class="summary-value">{{ displayScores.peer_score }}</div>
-        </div>
-        <div class="summary-card">
-          <div class="summary-label">领导评</div>
-          <div class="summary-value">{{ displayScores.leader_score }}</div>
-        </div>
+        <template v-for="(dim, idx) in scoreData?.dimension_scores" :key="'div-' + dim.dimension_name">
+          <div class="score-divider"></div>
+          <div class="score-cell">
+            <div class="score-label">{{ dim.dimension_name }}</div>
+            <div class="score-value">{{ dim.score !== null ? dim.score.toFixed(1) : '-' }}</div>
+          </div>
+        </template>
       </div>
 
       <div class="dimension-tabs">
@@ -81,6 +85,7 @@ import { RadarChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import api from '../supabase'
+import { getCurrentUser } from '../supabase'
 
 use([CanvasRenderer, RadarChart, TitleComponent, TooltipComponent])
 
@@ -90,6 +95,8 @@ const scoreData = ref(null)
 const radarData = ref(null)
 const period = ref(null)
 const activeTab = ref('self')
+const selectedPeriod = ref(null)
+const availablePeriods = ref([])
 
 const typeName = {
   self: '自评',
@@ -98,10 +105,10 @@ const typeName = {
 }
 
 const displayScores = computed(() => {
-  if (!scoreData.value?.scores) {
+  if (!scoreData.value) {
     return { total_score: '-', self_score: '-', peer_score: '-', leader_score: '-' }
   }
-  const s = scoreData.value.scores
+  const s = scoreData.value
   return {
     total_score: s.total_score !== null && s.total_score !== undefined ? s.total_score.toFixed(1) : '-',
     self_score: s.self_score !== null && s.self_score !== undefined ? s.self_score.toFixed(1) : '-',
@@ -112,7 +119,7 @@ const displayScores = computed(() => {
 
 const hasData = computed(() => {
   if (!scoreData.value) return false
-  const s = scoreData.value.scores
+  const s = scoreData.value
   return s && (s.self_score !== null || s.peer_score !== null || s.leader_score !== null)
 })
 
@@ -122,23 +129,45 @@ const currentDimensions = computed(() => {
 })
 
 const radarOption = computed(() => {
-  if (!radarData.value || !scoreData.value?.dimensions) return {}
-  const dims = scoreData.value.dimensions.self || []
-  const values = dims.map(d => d.score !== null ? d.score.toFixed(1) : 0)
-  const indicators = dims.map(d => ({ name: d.dimension_name, max: 10 }))
+  if (!scoreData.value?.dimensions?.self) return {}
+  const dims = scoreData.value.dimensions.self
+  const values = dims.map(d => d.score !== null ? d.score : 0)
+  const indicators = dims.map((d, idx) => ({
+    name: `{dimName|${d.dimension_name}}\n{score|${d.score !== null ? d.score.toFixed(1) : '-'}}`,
+    max: 10,
+    axisLabel: {
+      show: idx === 0,
+      color: '#666',
+      fontSize: 10,
+      margin: 4
+    }
+  }))
   return {
-    tooltip: {},
     radar: {
       indicator: indicators,
-      radius: '65%'
+      radius: '60%',
+      splitNumber: 5,
+      min: 5,
+      axisName: {
+        color: '#333',
+        fontSize: 12,
+        rich: {
+          dimName: { color: '#333', fontSize: 12 },
+          score: { color: '#22c55e', fontSize: 16, fontWeight: 'bold' }
+        }
+      },
+      splitLine: { lineStyle: { color: '#ccc' } },
+      splitArea: { show: false }
     },
     series: [{
       type: 'radar',
       data: [{
         value: values,
-        name: '综合得分',
-        areaStyle: { opacity: 0.3 },
-        lineStyle: { width: 2 }
+        name: '得分',
+        itemStyle: { color: '#4a9e8c' },
+        areaStyle: { opacity: 0.2 },
+        lineStyle: { width: 2 },
+        label: { show: false }
       }]
     }]
   }
@@ -148,12 +177,43 @@ const loadData = async () => {
   loading.value = true
   error.value = null
   try {
-    period.value = await api.getCurrentPeriod()
-    scoreData.value = await api.getScore()
-    if (hasData.value) {
-      radarData.value = await api.getRadar()
+    // 获取当前季度作为默认
+    const currentPeriod = await api.getCurrentPeriod()
+    if (!selectedPeriod.value) {
+      selectedPeriod.value = `${currentPeriod.year}-${currentPeriod.quarter}`
     }
+
+    // 生成可用季度列表（当前季度往前6个季度）
+    availablePeriods.value = []
+    for (let i = 0; i < 6; i++) {
+      let year = currentPeriod.year
+      let quarter = currentPeriod.quarter - i
+      while (quarter <= 0) {
+        quarter += 4
+        year -= 1
+      }
+      availablePeriods.value.push({
+        year,
+        quarter,
+        value: `${year}-${quarter}`
+      })
+    }
+
+    // 解析选中的季度
+    const [year, quarter] = selectedPeriod.value.split('-').map(Number)
+    period.value = { year, quarter }
+
+    // 根据是否有选择加载数据
+    const isCurrentPeriod = year === currentPeriod.year && quarter === currentPeriod.quarter
+    if (isCurrentPeriod) {
+      scoreData.value = await api.getScore()
+    } else {
+      scoreData.value = await api.getScoreByPeriod(null, year, quarter)
+    }
+
+    radarData.value = scoreData.value
   } catch (err) {
+    console.error('获取评分失败:', err)
     error.value = err.message || '获取评分失败'
   } finally {
     loading.value = false
@@ -177,12 +237,18 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--margin-md);
+  flex-wrap: wrap;
+  gap: var(--padding-sm);
 }
 
 .page-header h2 {
   margin: 0;
   font-size: var(--font-size-xl);
   font-family: var(--font-serif);
+}
+
+.period-selector {
+  min-width: 150px;
 }
 
 .loading-state {
@@ -220,44 +286,41 @@ onMounted(() => {
   gap: var(--padding-md);
 }
 
-.score-summary {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: var(--padding-sm);
-}
-
-.summary-card {
-  background: #f8f9fb;
-  border-radius: var(--border-radius-base);
-  padding: var(--padding-sm);
-  text-align: center;
-}
-
-.summary-card.total {
-  background: var(--primary);
+.score-overview {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: var(--border-radius);
+  padding: var(--padding-md);
   color: white;
 }
 
-.summary-label {
+.score-cell {
+  flex: 1;
+  text-align: center;
+  padding: 0 var(--padding-sm);
+}
+
+.score-cell.total {
+  flex: 1.2;
+}
+
+.score-label {
   font-size: var(--font-size-xs);
-  color: var(--text-tertiary);
-  margin-bottom: 4px;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: var(--padding-xs);
 }
 
-.summary-card.total .summary-label {
-  color: rgba(255, 255, 255, 0.7);
+.score-value {
+  font-size: 28px;
+  font-weight: bold;
+  color: white;
 }
 
-.summary-value {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.summary-card.total .summary-value {
-  color: var(--accent);
+.score-divider {
+  width: 1px;
+  height: 40px;
+  background: rgba(255, 255, 255, 0.3);
 }
 
 .dimension-tabs {
@@ -345,12 +408,25 @@ onMounted(() => {
 }
 
 @media screen and (max-width: 768px) {
-  .score-summary {
-    grid-template-columns: repeat(2, 1fr);
+  .score-overview {
+    flex-wrap: wrap;
+    gap: var(--padding-sm);
   }
 
-  .summary-value {
-    font-size: 18px;
+  .score-cell {
+    min-width: calc(33.33% - var(--padding-sm));
+  }
+
+  .score-cell.total {
+    min-width: 100%;
+  }
+
+  .score-divider {
+    display: none;
+  }
+
+  .score-value {
+    font-size: 22px;
   }
 
   .radar-section :deep(.v-chart) {
@@ -369,19 +445,16 @@ onMounted(() => {
     align-items: flex-start;
   }
 
-  .score-summary {
-    gap: 6px;
+  .score-overview {
+    padding: var(--padding-sm);
   }
 
-  .summary-card {
-    padding: 8px 4px;
+  .score-cell {
+    min-width: calc(50% - var(--padding-xs));
+    padding: 0;
   }
 
-  .summary-label {
-    font-size: 10px;
-  }
-
-  .summary-value {
+  .score-value {
     font-size: 18px;
   }
 

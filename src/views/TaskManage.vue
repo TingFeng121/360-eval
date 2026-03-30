@@ -861,11 +861,11 @@ onMounted(async () => {
 }
 
 .status-dot.done {
-  background: #42e7c3;
+  background: #10b981;
 }
 
 .status-dot.pending {
-  background: #e74c3c;
+  background: #ef4444;
 }
 
 .tag-active,

@@ -1881,7 +1881,7 @@ export const api = {
       throw new Error('权限不足')
     }
 
-    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSummary !== true) {
+    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSelf !== true) {
       throw new Error('权限不足')
     }
 
@@ -2024,15 +2024,25 @@ export const api = {
     const peerDims = calcDimensionScores('peer')
     const leaderDims = calcDimensionScores('leader')
 
+    // 计算各维度最终得分（加权）
+    const dimensionScores = dimensions.map(dim => {
+      const s = selfDims.find(d => d.dimension_name === dim.name)?.score
+      const p = peerDims.find(d => d.dimension_name === dim.name)?.score
+      const l = leaderDims.find(d => d.dimension_name === dim.name)?.score
+      const weighted = (s || 0) * weight.self_weight +
+                       (p || 0) * weight.peer_weight +
+                       (l || 0) * weight.leader_weight
+      return { dimension_name: dim.name, score: Math.round(weighted * 10) / 10 }
+    })
+
     return {
       user,
       period: { year, quarter },
-      scores: {
-        self_score: selfScore,
-        peer_score: peerScore,
-        leader_score: leaderScore,
-        total_score: Math.round(total * 10) / 10
-      },
+      self_score: selfScore !== null ? Math.round(selfScore * 10) / 10 : null,
+      peer_score: peerScore !== null ? Math.round(peerScore * 10) / 10 : null,
+      leader_score: leaderScore !== null ? Math.round(leaderScore * 10) / 10 : null,
+      total_score: Math.round(total * 10) / 10,
+      dimension_scores: dimensionScores,
       dimensions: {
         self: selfDims,
         peer: peerDims,

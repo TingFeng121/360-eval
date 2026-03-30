@@ -116,7 +116,7 @@
           <div class="pending-list">
             <div
               class="pending-item"
-              v-for="task in myPendingTasks.slice(0, 3)"
+              v-for="task in displayedPendingTasks"
               :key="task.id"
             >
               <span class="pending-name">{{ task.target_name }}</span>
@@ -311,6 +311,8 @@ const progressData = reactive({
 
 const myPendingTasks = ref([])
 
+const displayedPendingTasks = computed(() => myPendingTasks.value.slice(0, 3))
+
 const isMobile = ref(false)
 const showCreateModal = ref(false)
 const taskForm = reactive({
@@ -358,8 +360,8 @@ const loadStats = async () => {
     const tasks = await api.getTasks({ period })
 
     stats.totalTasks = tasks?.length || 0
-    stats.completedTasks = tasks?.filter(t => t.status === 'completed').length || 0
-    stats.pendingTasks = tasks?.filter(t => t.status === 'pending').length || 0
+    stats.completedTasks = completedReviewers
+    stats.pendingTasks = pendingReviewers
 
     const reviewerStats = {}
     tasks.forEach(task => {
@@ -377,6 +379,7 @@ const loadStats = async () => {
     let completedReviewers = 0
     let inProgressReviewers = 0
     let notStartedReviewers = 0
+    let pendingReviewers = 0
 
     Object.values(reviewerStats).forEach(stat => {
       if (stat.completed > 0 && stat.pending === 0) {
@@ -387,6 +390,8 @@ const loadStats = async () => {
         inProgressReviewers++
       }
     })
+
+    pendingReviewers = notStartedReviewers + inProgressReviewers
 
     progressData.completed = completedReviewers
     progressData.inProgress = inProgressReviewers
@@ -405,7 +410,6 @@ const loadMyPendingTasks = async () => {
     const tasks = await api.getTasks({ period })
     myPendingTasks.value = tasks
       .filter(t => t.reviewer_user_id === user.id && t.status === 'pending')
-      .slice(0, 5)
   } catch (err) {
     console.error('加载待完成任务失败:', err)
   }
