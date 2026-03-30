@@ -4,6 +4,7 @@
       <h2>数据汇总 - {{ period.year }}年第{{ period.quarter }}季度</h2>
       <div class="header-buttons">
         <el-button @click="exportTable">导出表格</el-button>
+        <el-button @click="exportDetail">导出详细计算</el-button>
         <el-button @click="exportRadarPdf">导出雷达图PDF</el-button>
       </div>
     </div>
@@ -30,7 +31,7 @@
             </div>
           </div>
           <div class="ranking-right">
-            <div class="ranking-score">{{ row.total_score?.toFixed(2) || '-' }}</div>
+            <div class="ranking-score">{{ row.total_score?.toFixed(1) || '-' }}</div>
             <el-button size="small" round class="ranking-btn">查看雷达图</el-button>
           </div>
         </div>
@@ -43,16 +44,16 @@
         <el-table-column prop="user_name" label="姓名" min-width="120" show-overflow-tooltip />
         <el-table-column prop="department" label="部门" min-width="140" show-overflow-tooltip />
         <el-table-column prop="self_score" label="自评" width="90" align="center">
-          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.self_score === 0 }">{{ row.self_score?.toFixed(2) || '-' }}</span></template>
+          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.self_score === 0 }">{{ row.self_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
         <el-table-column prop="peer_score" label="互评" width="90" align="center">
-          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.peer_score === 0 }">{{ row.peer_score?.toFixed(2) || '-' }}</span></template>
+          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.peer_score === 0 }">{{ row.peer_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
         <el-table-column prop="leader_score" label="领导评" width="90" align="center">
-          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.leader_score === 0 }">{{ row.leader_score?.toFixed(2) || '-' }}</span></template>
+          <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.leader_score === 0 }">{{ row.leader_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
         <el-table-column prop="total_score" label="综合得分" width="110" align="center" class-name="total-score-column">
-          <template #default="{ row }"><span class="total-score">{{ row.total_score?.toFixed(2) || '-' }}</span></template>
+          <template #default="{ row }"><span class="total-score">{{ row.total_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
         <el-table-column label="操作" width="120" align="center" fixed="right">
           <template #default="{ row }"><el-button size="small" type="primary" link class="radar-btn" @click="viewRadar(row.user_id)">查看雷达图</el-button></template>
@@ -70,31 +71,23 @@
       <div v-if="userScore" class="score-overview">
         <div class="score-cell total">
           <div class="score-label">综合</div>
-          <div class="score-value">{{ userScore.scores.total_score?.toFixed(2) || '-' }}</div>
+          <div class="score-value">{{ userScore.total_score?.toFixed(1) || '-' }}</div>
         </div>
-        <div class="score-divider"></div>
-        <div class="score-cell">
-          <div class="score-label">自评</div>
-          <div class="score-value">{{ userScore.scores.self_score?.toFixed(2) || '-' }}</div>
-        </div>
-        <div class="score-divider"></div>
-        <div class="score-cell">
-          <div class="score-label">他评</div>
-          <div class="score-value">{{ userScore.scores.peer_score?.toFixed(2) || '-' }}</div>
-        </div>
-        <div class="score-divider"></div>
-        <div class="score-cell">
-          <div class="score-label">领导评</div>
-          <div class="score-value">{{ userScore.scores.leader_score?.toFixed(2) || '-' }}</div>
-        </div>
+        <template v-for="(dim, idx) in userScore.dimension_scores" :key="'div-' + dim.dimension_name">
+          <div class="score-divider"></div>
+          <div class="score-cell">
+            <div class="score-label">{{ dim.dimension_name }}</div>
+            <div class="score-value">{{ dim.score?.toFixed(1) || '-' }}</div>
+          </div>
+        </template>
       </div>
 
       <div v-if="userScore" class="detail-table-wrapper">
         <el-table :data="dimensionDetails" border size="small" class="detail-table">
           <el-table-column prop="dimension_name" label="维度" min-width="100" />
-          <el-table-column prop="self" label="自评" width="70"><template #default="{ row }">{{ row.self?.toFixed(2) || '-' }}</template></el-table-column>
-          <el-table-column prop="peer" label="他评" width="70"><template #default="{ row }">{{ row.peer?.toFixed(2) || '-' }}</template></el-table-column>
-          <el-table-column prop="leader" label="领导评" width="70"><template #default="{ row }">{{ row.leader?.toFixed(2) || '-' }}</template></el-table-column>
+          <el-table-column prop="self" label="自评" width="70"><template #default="{ row }">{{ row.self?.toFixed(1) || '-' }}</template></el-table-column>
+          <el-table-column prop="peer" label="他评" width="70"><template #default="{ row }">{{ row.peer?.toFixed(1) || '-' }}</template></el-table-column>
+          <el-table-column prop="leader" label="领导评" width="70"><template #default="{ row }">{{ row.leader?.toFixed(1) || '-' }}</template></el-table-column>
         </el-table>
       </div>
     </div>
@@ -158,10 +151,10 @@
         <el-table :data="compareTableData" border size="small">
           <el-table-column prop="dimension" label="维度" min-width="120" />
           <el-table-column :label="compareMode === 'history' ? (comparePeriodLabel || '历史') : (compareUserName || '对比')" width="100">
-            <template #default="{ row }">{{ row.left?.toFixed(2) || '-' }}</template>
+            <template #default="{ row }">{{ row.left?.toFixed(1) || '-' }}</template>
           </el-table-column>
           <el-table-column :label="selectedUserName || '当前'" width="100">
-            <template #default="{ row }">{{ row.right?.toFixed(2) || '-' }}</template>
+            <template #default="{ row }">{{ row.right?.toFixed(1) || '-' }}</template>
           </el-table-column>
           <el-table-column label="差值" width="80">
             <template #default="{ row }">
@@ -223,12 +216,12 @@ const comparePeriodLabel = computed(() => {
 
 const leftRadarScore = computed(() => {
   if (!radarDataCompare.value?.scores) return '-'
-  return radarDataCompare.value.scores.total_score?.toFixed(2) || '-'
+  return radarDataCompare.value.scores.total_score?.toFixed(1) || '-'
 })
 
 const rightRadarScore = computed(() => {
   if (!radarData.value?.scores) return '-'
-  return radarData.value.scores.total_score?.toFixed(2) || '-'
+  return radarData.value.scores.total_score?.toFixed(1) || '-'
 })
 
 const dimensionDiffs = computed(() => {
@@ -255,7 +248,7 @@ const totalDiffClass = computed(() => {
 const totalDiffText = computed(() => {
   const diff = (radarData.value?.scores?.total_score || 0) - (radarDataCompare.value?.scores?.total_score || 0)
   if (Math.abs(diff) < 0.01) return '—'
-  return diff > 0 ? `+${diff.toFixed(2)}` : diff.toFixed(2)
+  return diff > 0 ? `+${diff.toFixed(1)}` : diff.toFixed(1)
 })
 
 const compareTableData = computed(() => {
@@ -271,7 +264,7 @@ const compareTableData = computed(() => {
       left,
       right,
       diffClass: diff === null ? 'neutral' : diff > 0 ? 'up' : diff < 0 ? 'down' : 'neutral',
-      diffText: diff === null ? '-' : diff > 0 ? `+${diff.toFixed(2)}` : diff === 0 ? '—' : diff.toFixed(2)
+      diffText: diff === null ? '-' : diff > 0 ? `+${diff.toFixed(1)}` : diff === 0 ? '—' : diff.toFixed(1)
     }
   })
 })
@@ -280,11 +273,44 @@ const leftRadarOption = computed(() => {
   if (!radarDataCompare.value?.dimensions?.self) return {}
   const dims = radarDataCompare.value.dimensions.self
   const values = dims.map(d => d.score !== null ? d.score : 0)
-  const indicators = dims.map(d => ({ name: d.dimension_name, max: 10 }))
+  const indicators = dims.map((d, idx) => ({
+    name: `{dimName|${d.dimension_name}}\n{score|${d.score !== null ? d.score.toFixed(1) : '-'}}`,
+    max: 10,
+    axisLabel: {
+      show: idx === 0,
+      color: '#666',
+      fontSize: 10,
+      margin: 4
+    }
+  }))
   return {
-    tooltip: {},
-    radar: { indicator: indicators, radius: '60%' },
-    series: [{ type: 'radar', data: [{ value: values, name: '得分', itemStyle: { color: '#2b5fec' }, areaStyle: { opacity: 0.15 }, lineStyle: { width: 2 } }] }]
+    radar: {
+      indicator: indicators,
+      radius: '60%',
+      splitNumber: 5,
+      min: 5,
+      axisName: {
+        color: '#333',
+        fontSize: 12,
+        rich: {
+          dimName: { color: '#333', fontSize: 12 },
+          score: { color: '#22c55e', fontSize: 16, fontWeight: 'bold' }
+        }
+      },
+      splitLine: { lineStyle: { color: '#ccc' } },
+      splitArea: { show: false }
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: values,
+        name: '得分',
+        itemStyle: { color: '#2b5fec' },
+        areaStyle: { opacity: 0.2 },
+        lineStyle: { width: 2 },
+        label: { show: false }
+      }]
+    }]
   }
 })
 
@@ -292,11 +318,44 @@ const rightRadarOption = computed(() => {
   if (!radarData.value?.dimensions?.self) return {}
   const dims = radarData.value.dimensions.self
   const values = dims.map(d => d.score !== null ? d.score : 0)
-  const indicators = dims.map(d => ({ name: d.dimension_name, max: 10 }))
+  const indicators = dims.map((d, idx) => ({
+    name: `{dimName|${d.dimension_name}}\n{score|${d.score !== null ? d.score.toFixed(1) : '-'}}`,
+    max: 10,
+    axisLabel: {
+      show: idx === 0,
+      color: '#666',
+      fontSize: 10,
+      margin: 4
+    }
+  }))
   return {
-    tooltip: {},
-    radar: { indicator: indicators, radius: '60%' },
-    series: [{ type: 'radar', data: [{ value: values, name: '得分', itemStyle: { color: '#4a9e8c' }, areaStyle: { opacity: 0.15 }, lineStyle: { width: 2 } }] }]
+    radar: {
+      indicator: indicators,
+      radius: '60%',
+      splitNumber: 5,
+      min: 5,
+      axisName: {
+        color: '#333',
+        fontSize: 12,
+        rich: {
+          dimName: { color: '#333', fontSize: 12 },
+          score: { color: '#22c55e', fontSize: 16, fontWeight: 'bold' }
+        }
+      },
+      splitLine: { lineStyle: { color: '#ccc' } },
+      splitArea: { show: false }
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: values,
+        name: '得分',
+        itemStyle: { color: '#4a9e8c' },
+        areaStyle: { opacity: 0.2 },
+        lineStyle: { width: 2 },
+        label: { show: false }
+      }]
+    }]
   }
 })
 
@@ -366,7 +425,7 @@ const dimensionDetails = computed(() => {
 const radarOption = computed(() => {
   if (!radarData.value) return {}
   const dimensions = radarData.value.radar.map(r => r.dimension)
-  const values = radarData.value.radar.map(r => r.total.toFixed(2))
+  const values = radarData.value.radar.map(r => r.total.toFixed(1))
   return {
     title: { text: `${radarData.value.user.name} - 能力雷达图`, left: 'center' },
     tooltip: {},
@@ -381,16 +440,34 @@ const exportTable = () => {
   const rows = summaryData.value.map(row => [
     row.user_name,
     row.department || '',
-    row.self_score?.toFixed(2) || '-',
-    row.peer_score?.toFixed(2) || '-',
-    row.leader_score?.toFixed(2) || '-',
-    row.total_score?.toFixed(2) || '-'
+    row.self_score?.toFixed(1) || '-',
+    row.peer_score?.toFixed(1) || '-',
+    row.leader_score?.toFixed(1) || '-',
+    row.total_score?.toFixed(1) || '-'
   ])
   const data = [headers, ...rows]
   const worksheet = XLSX.utils.aoa_to_sheet(data)
   const workbook = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(workbook, worksheet, '评分汇总')
   XLSX.writeFile(workbook, `360评价汇总_${periodStr}.xlsx`)
+}
+
+const exportDetail = async () => {
+  try {
+    ElMessage.info('正在导出详细计算...')
+    const detailData = await api.exportScoreDetail(period.value.year, period.value.quarter)
+    if (!detailData || detailData.length === 0) {
+      ElMessage.warning('没有可导出的数据')
+      return
+    }
+    const worksheet = XLSX.utils.json_to_sheet(detailData)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '详细计算')
+    XLSX.writeFile(workbook, `360详细计算_${period.value.year}Q${period.value.quarter}.xlsx`)
+    ElMessage.success('导出成功')
+  } catch (err) {
+    ElMessage.error(err.message || '导出失败')
+  }
 }
 
 const exportRadarPdf = async () => {

@@ -334,12 +334,40 @@ export const api = {
       throw new Error('不能删除自己的账号')
     }
 
+    // 先获取关联的任务 ID
+    const { data: relatedTasks } = await supabase
+      .from('evaluation_tasks')
+      .select('id')
+      .or(`target_user_id.eq.${id},reviewer_user_id.eq.${id}`)
+
+    const taskIds = relatedTasks?.map(t => t.id) || []
+
+    // 删除关联的答案
+    if (taskIds.length > 0) {
+      const { error: answerError } = await supabase
+        .from('answers')
+        .delete()
+        .in('task_id', taskIds)
+
+      if (answerError) throw new Error('删除关联答案失败：' + answerError.message)
+    }
+
+    // 删除关联的评价任务
+    if (taskIds.length > 0) {
+      const { error: taskError } = await supabase
+        .from('evaluation_tasks')
+        .delete()
+        .in('id', taskIds)
+
+      if (taskError) throw new Error('删除关联任务失败：' + taskError.message)
+    }
+
     // 删除 profile（Auth 用户保留，因为前端无法删除）
     const { error: profileError } = await supabase
       .from('profiles')
       .delete()
       .eq('id', id)
-    
+
     if (profileError) throw profileError
 
     return { message: '用户删除成功' }
@@ -499,11 +527,138 @@ export const api = {
     const { error } = await supabase
       .from('answers')
       .delete()
-      .neq('id', 0) // 删除所有
+      .neq('id', 0)
 
     if (error) throw error
 
     return { message: '所有答案已清空' }
+  },
+
+  async importAnswers(jsonStr) {
+    await requireAuth()
+    const session = await getLocalUser()
+    
+    if (session.user.role !== 'admin') {
+      throw new Error('权限不足')
+    }
+
+    try {
+      const data = JSON.parse(jsonStr);
+      if (!data.answers || !Array.isArray(data.answers)) {
+        throw new Error('格式错误：缺少 answers 数组');
+      }
+
+      const users = await this.getUsers(false);
+      const usernameToId = {};
+      users.forEach(u => usernameToId[u.username] = u.id);
+
+      const tasks = await this.getTasks();
+      const taskMap = {};
+      tasks.forEach(t => taskMap[`${t.target_user_id}_${t.reviewer_user_id}_${t.eval_type}`] = t.id);
+
+      const questions = await this.getQuestions();
+      const questionTextToId = {};
+      const normalizeText = (str) => String(str || '').trim().replace(/\s+/g, ' ');
+      questions.forEach(q => questionTextToId[normalizeText(q.content)] = q.id);
+
+      const answersToInsert = [];
+      let skipCount = 0;
+      const errors = [];
+      let matchDetails = { total: 0, matched: 0, noTarget: 0, noReviewer: 0, noTask: 0, noQuestion: 0 };
+
+      for (const item of data.answers) {
+        matchDetails.total++;
+        const targetId = usernameToId[item.target_username];
+        const reviewerId = usernameToId[item.reviewer_username];
+        const evalType = item.eval_type;
+        const taskKey = `${targetId}_${reviewerId}_${evalType}`;
+        const taskId = taskMap[taskKey];
+
+        if (!targetId) {
+          errors.push(`用户不存在: ${item.target_username}`)
+          matchDetails.noTarget++;
+          skipCount++;
+          continue;
+        }
+        if (!reviewerId) {
+          errors.push(`评价人不存在: ${item.reviewer_username}`)
+          matchDetails.noReviewer++;
+          skipCount++;
+          continue;
+        }
+        if (!taskId) {
+          errors.push(`任务不存在: ${item.target_username}/${item.reviewer_username}/${item.eval_type}`)
+          matchDetails.noTask++;
+          skipCount++;
+          continue;
+        }
+
+        const task = tasks.find(t => t.id === taskId);
+        let questionId = null;
+
+        if (task?.snapshot_data?.questions && task.snapshot_data.questions.length > 0) {
+          const snapshotQuestion = task.snapshot_data.questions.find(q =>
+            normalizeText(q.content) === normalizeText(item.question_content)
+          );
+          questionId = snapshotQuestion?.id;
+        }
+
+        if (!questionId) {
+          questionId = questionTextToId[normalizeText(item.question_content)];
+        }
+
+        if (!questionId) {
+          errors.push(`题目不存在: ${item.question_content}`)
+          matchDetails.noQuestion++;
+          skipCount++;
+          continue;
+        }
+
+        matchDetails.matched++;
+
+        answersToInsert.push({
+          task_id: taskId,
+          question_id: questionId,
+          score: item.score,
+          reason: item.reason || ''
+        });
+      }
+
+      if (answersToInsert.length === 0) {
+        const uniqueErrors = [...new Set(errors)].slice(0, 5).join('\n')
+        const detailMsg = `总数据:${matchDetails.total}, 匹配成功:${matchDetails.matched}, 无任务:${matchDetails.noTask}, 无题目:${matchDetails.noQuestion}`
+        throw new Error(`没有可导入的有效数据。\n${detailMsg}\n${uniqueErrors}${errors.length > 5 ? '\n...还有更多错误' : ''}`);
+      }
+
+      // 使用 upsert 插入/更新答案，保留未导入的题目答案
+      const { error: upsertError } = await supabase
+        .from('answers')
+        .upsert(answersToInsert, { onConflict: 'task_id,question_id' });
+
+      if (upsertError) {
+        console.error('插入失败:', upsertError);
+        throw upsertError;
+      }
+
+      // 更新任务状态为已完成
+      const importedTaskIds = [...new Set(answersToInsert.map(a => a.task_id))]
+      const { error: updateError } = await supabase
+        .from('evaluation_tasks')
+        .update({ status: 'completed' })
+        .in('id', importedTaskIds)
+
+      if (updateError) {
+        console.warn('更新任务状态失败:', updateError);
+      }
+
+      apiCache.clear('getTasks');
+
+      return { 
+        message: `导入成功：${answersToInsert.length} 条${skipCount > 0 ? `，跳过 ${skipCount} 条无效数据` : ''}` 
+      };
+    } catch (e) {
+      throw new Error('导入失败: ' + e.message);
+    }
   },
 
   // 初始化导入题目（先清空再导入，覆盖模式）
@@ -708,7 +863,7 @@ export const api = {
       throw new Error('权限不足')
     }
 
-    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSummary !== true) {
+    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSelf !== true) {
       throw new Error('权限不足')
     }
 
@@ -766,6 +921,9 @@ export const api = {
       leader: tasks.filter(t => t.eval_type === 'leader')
     }
 
+    // 四舍五入保留1位小数
+    const round1 = (num) => Math.round((num || 0) * 10) / 10
+
     // 计算各类型总分
     const calcTypeScore = (evalType) => {
       const typeTasks = taskMap[evalType]
@@ -775,7 +933,7 @@ export const api = {
       const typeAnswers = allAnswers.filter(a => taskIds.includes(a.task_id))
 
       if (typeAnswers.length === 0) return null
-      return typeAnswers.reduce((s, a) => s + a.score, 0) / typeAnswers.length
+      return round1(typeAnswers.reduce((s, a) => s + a.score, 0) / typeAnswers.length)
     }
 
     const selfScore = calcTypeScore('self')
@@ -799,7 +957,7 @@ export const api = {
       totalWeight += weight.leader_weight
     }
 
-    const total = totalWeight > 0 ? totalScore / totalWeight : 0
+    const total = totalWeight > 0 ? round1(totalScore / totalWeight) : 0
 
     // 计算各维度得分
     const calcDimensionScores = (evalType) => {
@@ -832,11 +990,11 @@ export const api = {
             taskAnswerMap[answer.task_id].push(answer.score)
           })
           const reviewerScores = Object.values(taskAnswerMap).map(scores =>
-            scores.reduce((s, a) => s + a, 0) / scores.length
+            round1(scores.reduce((s, a) => s + a, 0) / scores.length)
           )
-          avgScore = reviewerScores.reduce((s, a) => s + a, 0) / reviewerScores.length
+          avgScore = round1(reviewerScores.reduce((s, a) => s + a, 0) / reviewerScores.length)
         } else {
-          avgScore = dimAnswers.reduce((s, a) => s + a.score, 0) / dimAnswers.length
+          avgScore = round1(dimAnswers.reduce((s, a) => s + a.score, 0) / dimAnswers.length)
         }
 
         return { dimension_name: dim.name, score: avgScore }
@@ -854,7 +1012,7 @@ export const api = {
         self_score: selfScore,
         peer_score: peerScore,
         leader_score: leaderScore,
-        total_score: Math.round(total * 10) / 10
+        total_score: total
       },
       dimensions: {
         self: selfDims,
@@ -1262,7 +1420,7 @@ export const api = {
       throw new Error('只能填写分配给你的评价任务')
     }
 
-    // 插入/更新答案
+    // 插入/更新答案 - 批量操作
     const answerRecords = answers.map(a => ({
       task_id: taskId,
       question_id: a.questionId,
@@ -1270,14 +1428,12 @@ export const api = {
       reason: a.reason || ''
     }))
 
-    // 使用 upsert 插入答案
-    for (const answer of answerRecords) {
-      const { error } = await supabase
-        .from('answers')
-        .upsert(answer, { onConflict: 'task_id,question_id' })
-      
-      if (error) throw error
-    }
+    // 批量 upsert 插入答案
+    const { error: upsertError } = await supabase
+      .from('answers')
+      .upsert(answerRecords, { onConflict: 'task_id,question_id' })
+
+    if (upsertError) throw upsertError
 
     // 更新任务状态
     const { error: updateError } = await supabase
@@ -1297,10 +1453,9 @@ export const api = {
 
   // 获取权重配置（带缓存）
   async getWeight() {
-    // 检查缓存
     const cached = apiCache.get('getWeight')
     if (cached) return cached
-    
+
     const { data, error } = await supabase
       .from('weight_config')
       .select('*')
@@ -1309,12 +1464,11 @@ export const api = {
 
     let weight
     if (error || !data) {
-      weight = { self_weight: 0.3, peer_weight: 0.3, leader_weight: 0.4, score_type: '10' }
+      weight = { self_weight: 0.2, peer_weight: 0.3, leader_weight: 0.5, score_type: '10' }
     } else {
       weight = data
     }
-    
-    // 缓存结果
+
     apiCache.set('getWeight', {}, weight)
     
     return weight
@@ -1422,6 +1576,9 @@ export const api = {
       questionMap[key].push(q)
     })
 
+    // 四舍五入保留1位小数
+    const round1 = (num) => Math.round((num || 0) * 10) / 10
+
     // 计算每个用户的得分
     const results = users.map(user => {
       // 计算各类型总分（用于显示）
@@ -1429,10 +1586,10 @@ export const api = {
         const key = `${user.id}_${evalType}`
         const typeTasks = taskMap[key] || []
         if (typeTasks.length === 0) return null
-        
+
         let totalScore = 0
         let answerCount = 0
-        
+
         typeTasks.forEach(task => {
           const taskAnswers = answerMap[task.id] || []
           if (taskAnswers.length > 0) {
@@ -1440,85 +1597,86 @@ export const api = {
             answerCount += taskAnswers.length
           }
         })
-        
-        return answerCount > 0 ? totalScore / answerCount : null
-      }
 
-      // 计算各维度的各类型得分
-      const calcDimScores = (dimId, evalType) => {
-        const key = `${dimId}_${evalType}`
-        const typeTasks = taskMap[`${user.id}_${evalType}`] || []
-        const dimQuestions = questionMap[key] || []
-        
-        if (typeTasks.length === 0 || dimQuestions.length === 0) return null
-        
-        const questionIds = dimQuestions.map(q => q.id)
-        
-        if (evalType === 'peer') {
-          // 他评：先按每个评价人计算平均分，再对所有评价人求平均
-          const reviewerScores = []
-          typeTasks.forEach(task => {
-            const taskAnswers = answerMap[task.id] || []
-            const dimAnswers = taskAnswers.filter(a => questionIds.includes(a.question_id))
-            if (dimAnswers.length > 0) {
-              const avg = dimAnswers.reduce((s, a) => s + a.score, 0) / dimAnswers.length
-              reviewerScores.push(avg)
-            }
-          })
-          return reviewerScores.length > 0 
-            ? reviewerScores.reduce((s, a) => s + a, 0) / reviewerScores.length 
-            : null
-        } else {
-          // 自评和领导评：直接计算平均分
-          let totalScore = 0
-          let answerCount = 0
-          typeTasks.forEach(task => {
-            const taskAnswers = answerMap[task.id] || []
-            const dimAnswers = taskAnswers.filter(a => questionIds.includes(a.question_id))
-            if (dimAnswers.length > 0) {
-              totalScore += dimAnswers.reduce((s, a) => s + a.score, 0)
-              answerCount += dimAnswers.length
-            }
-          })
-          return answerCount > 0 ? totalScore / answerCount : null
-        }
+        return answerCount > 0 ? round1(totalScore / answerCount) : null
       }
 
       const selfScore = calcTypeScore('self')
       const peerScore = calcTypeScore('peer')
       const leaderScore = calcTypeScore('leader')
 
-      // 计算每个维度的最终得分
-      const dimFinalScores = (dimensions || []).map(dim => {
+      const calcDimScores = (dimId, evalType) => {
+        const typeTasks = taskMap[evalType]
+        if (!typeTasks || typeTasks.length === 0) return null
+        const taskIds = typeTasks.map(t => t.id)
+        const typeAnswers = allAnswers.filter(a => taskIds.includes(a.task_id))
+        const key = `${dimId}_${evalType}`
+        const questionIds = questionMap[key] || []
+        if (questionIds.length === 0) return null
+        const dimAnswers = typeAnswers.filter(a => questionIds.includes(a.question_id))
+        if (dimAnswers.length === 0) return null
+        if (evalType === 'peer') {
+          const taskAnswerMap = {}
+          dimAnswers.forEach(answer => {
+            if (!taskAnswerMap[answer.task_id]) taskAnswerMap[answer.task_id] = []
+            taskAnswerMap[answer.task_id].push(answer.score)
+          })
+          const reviewerScores = Object.values(taskAnswerMap).map(scores =>
+            scores.reduce((s, a) => s + a, 0) / scores.length
+          )
+          return reviewerScores.reduce((s, a) => s + a, 0) / reviewerScores.length
+        } else {
+          return dimAnswers.reduce((s, a) => s + a.score, 0) / dimAnswers.length
+        }
+      }
+
+      const dimensionScores = (dimensions || []).map(dim => {
         const self = calcDimScores(dim.id, 'self')
         const peer = calcDimScores(dim.id, 'peer')
         const leader = calcDimScores(dim.id, 'leader')
-        
-        return (self || 0) * weight.self_weight + 
-               (peer || 0) * weight.peer_weight + 
-               (leader || 0) * weight.leader_weight
+        const weighted = (self || 0) * weight.self_weight +
+                         (peer || 0) * weight.peer_weight +
+                         (leader || 0) * weight.leader_weight
+        return { dimension_name: dim.name, score: round1(weighted) }
       })
 
-      // 综合总分 = 6个维度最终得分的算术平均，保留1位小数
-      const total = dimFinalScores.length > 0
-        ? dimFinalScores.reduce((s, a) => s + a, 0) / dimFinalScores.length
+      const total = dimensionScores.length > 0
+        ? round1(dimensionScores.reduce((s, a) => s + a.score, 0) / dimensionScores.length)
         : 0
 
       return {
         user_id: user.id,
         user_name: user.name,
         department: user.department,
-        self_score: selfScore,
-        peer_score: peerScore,
-        leader_score: leaderScore,
-        total_score: Math.round(total * 10) / 10
+        self_score: selfScore !== null ? round1(selfScore) : null,
+        peer_score: peerScore !== null ? round1(peerScore) : null,
+        leader_score: leaderScore !== null ? round1(leaderScore) : null,
+        total_score: total,
+        dimension_scores: dimensionScores,
+        dimensions: {
+          self: (dimensions || []).map(dim => {
+            const s = calcDimScores(dim.id, 'self')
+            return { dimension_name: dim.name, score: s !== null ? round1(s) : null }
+          }),
+          peer: (dimensions || []).map(dim => {
+            const s = calcDimScores(dim.id, 'peer')
+            return { dimension_name: dim.name, score: s !== null ? round1(s) : null }
+          }),
+          leader: (dimensions || []).map(dim => {
+            const s = calcDimScores(dim.id, 'leader')
+            return { dimension_name: dim.name, score: s !== null ? round1(s) : null }
+          })
+        }
       }
     })
 
-    const sortedResults = results.sort((a, b) => b.total_score - a.total_score).map((item, index) => ({
-      ...item,
-      rank: index + 1
-    }))
+    const sortedResults = results
+      .filter(r => r.total_score !== null && r.total_score !== undefined)
+      .sort((a, b) => (b.total_score || 0) - (a.total_score || 0))
+      .map((item, index) => ({
+        ...item,
+        rank: index + 1
+      }))
     apiCache.set('getSummary', sortedResults)
     return sortedResults
   },
@@ -1535,7 +1693,7 @@ export const api = {
       throw new Error('权限不足')
     }
 
-    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSummary !== true) {
+    if (session.user.role === 'employee' && isOwnData && session.user.permissions?.viewSelf !== true) {
       throw new Error('权限不足')
     }
 
@@ -1683,10 +1841,12 @@ export const api = {
       const self = selfDims[dimIdx]?.score
       const peer = peerDims[dimIdx]?.score
       const leader = leaderDims[dimIdx]?.score
-      
-      return (self || 0) * weight.self_weight + 
-             (peer || 0) * weight.peer_weight + 
-             (leader || 0) * weight.leader_weight
+
+      const result = (self ?? 0) * weight.self_weight +
+                     (peer ?? 0) * weight.peer_weight +
+                     (leader ?? 0) * weight.leader_weight
+
+      return result
     }
 
     // 计算综合总分：6个维度最终得分的算术平均，保留1位小数
@@ -1696,12 +1856,11 @@ export const api = {
     return {
       user,
       period,
-      scores: {
-        self_score: selfScore,
-        peer_score: peerScore,
-        leader_score: leaderScore,
-        total_score: Math.round(totalFinalScore * 10) / 10
-      },
+      total_score: Math.round(totalFinalScore * 10) / 10,
+      dimension_scores: dimensions.map((dim, idx) => ({
+        dimension_name: dim.name,
+        score: Math.round(calcDimFinalScore(idx) * 10) / 10
+      })),
       dimensions: {
         self: selfDims,
         peer: peerDims,
@@ -1938,30 +2097,184 @@ export const api = {
     }
 
     return { message: '数据导入成功' }
+  },
+
+  // 导出详细计算明细
+  async exportScoreDetail(year, quarter) {
+    await requireAuth()
+    const session = await getLocalUser()
+
+    if (session.user.role !== 'admin') {
+      throw new Error('权限不足')
+    }
+
+    const weight = await this.getWeight()
+
+    const periodStart = `${year}-${(quarter - 1) * 3 + 1}-01`
+    const periodEnd = quarter === 4 ? `${year + 1}-01-01` : `${year}-${quarter * 3 + 1}-01`
+
+    const [usersData, dimensionsData, tasksData, answersData, questionsData] = await Promise.all([
+      supabase.from('profiles').select('*'),
+      supabase.from('dimensions').select('*').order('sort_order'),
+      supabase.from('evaluation_tasks').select('*').eq('status', 'completed').gte('completed_at', periodStart).lt('completed_at', periodEnd),
+      supabase.from('answers').select('*'),
+      supabase.from('questions').select('*, dimensions(name)').order('dimension_id').order('sort_order')
+    ])
+
+    const users = usersData.data || []
+    const dimensions = dimensionsData.data || []
+    const tasks = tasksData.data || []
+    const answers = answersData.data || []
+    const questions = questionsData.data || []
+
+    const userMap = {}
+    users.forEach(u => userMap[u.id] = u)
+
+    const round1 = (num) => Math.round((num || 0) * 10) / 10
+
+    const result = []
+    for (const user of users) {
+      const userTasks = {
+        self: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'self'),
+        peer: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'peer'),
+        leader: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'leader')
+      }
+
+      const calcTaskScore = (taskList) => {
+        if (!taskList || taskList.length === 0) return null
+        const taskIds = taskList.map(t => t.id)
+        const taskAnswers = answers.filter(a => taskIds.includes(a.task_id))
+        if (taskAnswers.length === 0) return null
+        return round1(taskAnswers.reduce((s, a) => s + a.score, 0) / taskAnswers.length)
+      }
+
+      const selfScore = calcTaskScore(userTasks.self)
+      const peerScore = calcTaskScore(userTasks.peer)
+      const leaderScore = calcTaskScore(userTasks.leader)
+
+      let totalWeight = 0
+      let totalScore = 0
+      if (selfScore !== null) { totalScore += selfScore * weight.self_weight; totalWeight += weight.self_weight }
+      if (peerScore !== null) { totalScore += peerScore * weight.peer_weight; totalWeight += weight.peer_weight }
+      if (leaderScore !== null) { totalScore += leaderScore * weight.leader_weight; totalWeight += weight.leader_weight }
+      const total = totalWeight > 0 ? round1(totalScore / totalWeight) : 0
+
+      for (const dim of dimensions) {
+        const dimQuestions = questions.filter(q => q.dimension_id === dim.id)
+        if (dimQuestions.length === 0) continue
+
+        const calcDimScore = (taskList) => {
+          if (!taskList || taskList.length === 0) return null
+          const taskIds = taskList.map(t => t.id)
+          const taskAnswers = answers.filter(a => taskIds.includes(a.task_id) && dimQuestions.map(q => q.id).includes(a.question_id))
+          if (taskAnswers.length === 0) return null
+          return round1(taskAnswers.reduce((s, a) => s + a.score, 0) / taskAnswers.length)
+        }
+
+        const selfDim = calcDimScore(userTasks.self)
+        const peerDim = calcDimScore(userTasks.peer)
+        const leaderDim = calcDimScore(userTasks.leader)
+
+        result.push({
+          '用户': user.name,
+          '部门': user.department || '',
+          '维度': dim.name,
+          '评价类型': '自评',
+          '题目数': dimQuestions.length,
+          '任务数': userTasks.self?.length || 0,
+          '平均分': selfDim
+        })
+        result.push({
+          '用户': user.name,
+          '部门': user.department || '',
+          '维度': dim.name,
+          '评价类型': '他评',
+          '题目数': dimQuestions.length,
+          '任务数': userTasks.peer?.length || 0,
+          '平均分': peerDim
+        })
+        result.push({
+          '用户': user.name,
+          '部门': user.department || '',
+          '维度': dim.name,
+          '评价类型': '领导评',
+          '题目数': dimQuestions.length,
+          '任务数': userTasks.leader?.length || 0,
+          '平均分': leaderDim
+        })
+      }
+
+      result.push({
+        '用户': user.name,
+        '部门': user.department || '',
+        '维度': '综合',
+        '评价类型': '汇总',
+        '题目数': '',
+        '任务数': '',
+        '自评均分': selfScore,
+        '他评均分': peerScore,
+        '领导评均分': leaderScore,
+        '权重': `自评${weight.self_weight} 他评${weight.peer_weight} 领导评${weight.leader_weight}`,
+        '综合得分': total
+      })
+    }
+
+    return result
   }
 }
 
 // 创建用户但不影响当前登录状态（用于管理员创建用户）
 export const createUserWithoutLogin = async (username, password, userData) => {
-  // 创建独立的 Supabase 客户端实例
-  const isolatedClient = createClient(supabaseUrl, supabaseAnonKey)
+  const isolatedClient = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      storageKey: 'isolated-auth-storage'
+    }
+  })
+  const email = `${username}@test.com`
+
+  // 先检查 profiles 表中是否已存在该用户名
+  const { data: existingProfile } = await supabase
+    .from('profiles')
+    .select('id')
+    .eq('username', username)
+    .single()
+
+  if (existingProfile) {
+    throw new Error('该用户名已存在，请使用其他用户名')
+  }
 
   // 创建 Auth 用户
   const { data: authData, error: authError } = await isolatedClient.auth.signUp({
-    email: `${username}@test.com`,
-    password: password,
-    options: {
-      data: {
-        username: username,
-        name: userData.name,
-        role: userData.role,
-        department: userData.department
-      }
-    }
+    email: email,
+    password: password
   })
 
-  if (authError) throw authError
+  if (authError) {
+    if (authError.message.includes('already') || authError.code === 'user_already_exists') {
+      throw new Error('该用户名在认证系统中已存在（可能是之前的创建操作中途失败），请尝试其他用户名或联系管理员')
+    }
+    throw authError
+  }
   if (!authData.user) throw new Error('用户创建失败')
+
+  // 创建 profile
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .insert({
+      id: authData.user.id,
+      username: username,
+      name: userData.name,
+      role: userData.role,
+      department: userData.department,
+      permissions: JSON.parse(userData.permissions || '{"viewSelf":true,"viewPeer":false,"viewLeader":false,"viewSummary":false}')
+    })
+
+  if (profileError) {
+    throw new Error('用户已创建但profile同步失败，请联系管理员清理后重试。错误: ' + profileError.message)
+  }
+
+  // 清除隔离客户端的session，防止影响当前登录状态
+  await isolatedClient.auth.signOut()
 
   return { id: authData.user.id }
 }

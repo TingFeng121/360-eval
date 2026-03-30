@@ -134,6 +134,26 @@
       </div>
     </el-card>
 
+    <el-card class="data-manage-card">
+      <template #header>
+        <div class="card-header">
+          <span class="card-title">📝 评分结果导入</span>
+        </div>
+      </template>
+      <div class="data-manage-content">
+        <p class="data-manage-desc">导入评分结果，通过用户名匹配自评/他评/领导评任务</p>
+        <div class="data-manage-buttons">
+          <el-upload :auto-upload="false" :show-file-list="false" :on-change="handleAnswersImport" accept=".xlsx,.xls,.json">
+            <el-button type="default">
+              <el-icon><Upload /></el-icon>
+              导入评分结果
+            </el-button>
+          </el-upload>
+          <el-button type="text" @click="showImportTemplate">查看导入模板</el-button>
+        </div>
+      </div>
+    </el-card>
+
     <div class="system-info-card">
       <div class="system-info-item">
         <span class="info-label">当前季度</span>
@@ -155,6 +175,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, ElUpload } from 'element-plus'
 import { Loading, Warning, Delete, RefreshLeft, Upload, Download } from '@element-plus/icons-vue'
+import * as XLSX from 'xlsx'
 import api, { getCurrentUser, supabase } from '../supabase'
 
 const loading = reactive({
@@ -361,6 +382,91 @@ const handleDataImport = (file) => {
     }
   }
   reader.readAsText(file.raw)
+}
+
+const handleAnswersImport = (file) => {
+  if (isGuest.value) return ElMessage.warning('访客无权操作')
+  const fileName = file.name || file.raw?.name || ''
+  const isExcel = fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    try {
+      let jsonStr
+      if (isExcel) {
+        const workbook = XLSX.read(e.target.result, { type: 'array' })
+        const firstSheet = workbook.Sheets[workbook.SheetNames[0]]
+        const jsonData = XLSX.utils.sheet_to_json(firstSheet)
+        if (!jsonData || jsonData.length === 0) {
+          throw new Error('Excel 文件内容为空')
+        }
+        const answers = jsonData.map(row => ({
+          target_username: String(row['被评价人'] || row['target_username'] || ''),
+          reviewer_username: String(row['评价人'] || row['reviewer_username'] || ''),
+          eval_type: String(row['评价类型'] || row['eval_type'] || 'self').toLowerCase(),
+          question_content: String(row['题目内容'] || row['question_content'] || ''),
+          score: Number(row['分数'] || row['score'] || 0),
+          reason: String(row['理由'] || row['reason'] || '')
+        })).filter(item => item.target_username && item.reviewer_username && item.question_content)
+        jsonStr = JSON.stringify({ answers })
+      } else {
+        jsonStr = e.target.result
+      }
+      const result = await api.importAnswers(jsonStr)
+      ElMessage.success(result.message)
+    } catch (err) {
+      ElMessage.error(err.message)
+    }
+  }
+  if (isExcel) {
+    reader.readAsArrayBuffer(file.raw)
+  } else {
+    reader.readAsText(file.raw)
+  }
+}
+
+const showImportTemplate = () => {
+  const templateData = [
+    {
+      '被评价人': 'zhangsan',
+      '评价人': 'zhangsan',
+      '评价类型': 'self',
+      '题目内容': '题目1的内容',
+      '分数': 8,
+      '理由': '自评理由'
+    },
+    {
+      '被评价人': 'zhangsan',
+      '评价人': 'lisi',
+      '评价类型': 'peer',
+      '题目内容': '题目1的内容',
+      '分数': 7,
+      '理由': '他评理由'
+    },
+    {
+      '被评价人': 'zhangsan',
+      '评价人': 'wangwu',
+      '评价类型': 'leader',
+      '题目内容': '题目1的内容',
+      '分数': 9,
+      '理由': '领导评价理由'
+    }
+  ]
+  ElMessageBox.confirm(
+    `<p>Excel 模板包含以下列：</p>
+    <p style="font-size:12px;color:#666">被评价人 | 评价人 | 评价类型(self/peer/leader) | 题目内容 | 分数 | 理由</p>`,
+    '导入模板说明',
+    {
+      confirmButtonText: '下载 Excel',
+      cancelButtonText: '关闭',
+      messageHtml: true
+    }
+  ).then(() => {
+    const worksheet = XLSX.utils.json_to_sheet(templateData)
+    const workbook = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(workbook, worksheet, '评分结果')
+    XLSX.writeFile(workbook, '评分结果导入模板.xlsx')
+  }).catch(() => {})
 }
 
 onMounted(async () => {

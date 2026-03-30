@@ -23,7 +23,7 @@
         
         <div v-for="q in dim.questions" :key="q.id" class="question-item">
           <div class="question-header">
-            <span class="question-num">{{ q.sort_order }}.</span>
+            <span class="question-num">{{ q.sort_order + 1 }}.</span>
             <span class="question-content">{{ q.content }}</span>
           </div>
 
@@ -34,15 +34,15 @@
 
           <div class="score-section">
             <span class="score-label">评分：</span>
-            <div class="score-slider-wrapper">
-              <el-slider 
-                v-model="answers[q.id].score" 
-                :min="1" 
-                :max="10" 
-                :step="1" 
-                show-stops
+            <div class="score-buttons">
+              <button
+                v-for="n in 10"
+                :key="n"
+                class="score-btn"
+                :class="{ active: answers[q.id].score === n, disabled: isViewMode }"
                 :disabled="isViewMode"
-              />
+                @click="answers[q.id].score = n"
+              >{{ n }}</button>
             </div>
             <span class="score-value">{{ answers[q.id].score || '-' }}分</span>
           </div>
@@ -320,13 +320,38 @@ onMounted(loadTask)
   font-size: var(--font-size-sm);
 }
 
-.score-slider-wrapper {
-  flex: 1;
-  min-width: 150px;
+.score-buttons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
-.score-section .el-slider {
-  width: 100%;
+.score-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #dcdfe6;
+  border-radius: 6px;
+  background: #fff;
+  color: #606266;
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.score-btn:hover:not(.disabled):not(.active) {
+  border-color: #409eff;
+  color: #409eff;
+}
+
+.score-btn.active {
+  background: #409eff;
+  border-color: #409eff;
+  color: #fff;
+}
+
+.score-btn.disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .score-value {

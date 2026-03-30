@@ -341,6 +341,11 @@ const handleSubmit = async () => {
     return
   }
 
+  if (!isEdit.value && form.password && form.password.length < 6) {
+    ElMessage.warning('密码长度不能少于6位')
+    return
+  }
+
   try {
     if (isEdit.value) {
       const updateData = {
@@ -355,9 +360,7 @@ const handleSubmit = async () => {
       await api.updateUser(form.id, updateData)
       ElMessage.success('更新成功')
     } else {
-      await createUserWithoutLogin({
-        username: form.username,
-        password: form.password,
+      await createUserWithoutLogin(form.username, form.password, {
         name: form.name,
         department: form.department,
         role: form.role,
