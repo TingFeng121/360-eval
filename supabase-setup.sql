@@ -42,6 +42,7 @@ create table if not exists public.questions (
 );
 
 -- 4. 创建 evaluation_tasks 表（评价任务表）
+-- status: pending(待填写), completed(已完成), saved(已暂存)
 create table if not exists public.evaluation_tasks (
   id uuid primary key default gen_random_uuid(),
   target_user_id uuid references public.profiles(id) on delete cascade,
@@ -49,7 +50,7 @@ create table if not exists public.evaluation_tasks (
   eval_type text not null check (eval_type in ('self', 'peer', 'leader')),
   year integer not null,
   quarter integer not null check (quarter between 1 and 4),
-  status text not null default 'pending' check (status in ('pending', 'completed')),
+  status text not null default 'pending' check (status in ('pending', 'completed', 'saved')),
   snapshot_data jsonb,
   created_at timestamptz default now(),
   completed_at timestamptz
