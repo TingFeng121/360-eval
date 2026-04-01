@@ -38,3 +38,12 @@ Thumbs.db
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/
+
+# Unit tests
+src/__tests__/
+*.test.js
+*.spec.js
+/test-coverage/
+
+# Codex
+.codex/
