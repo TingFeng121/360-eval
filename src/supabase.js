@@ -1681,9 +1681,22 @@ export const api = {
         return { dimension_name: dim.name, score: round1(weighted) }
       })
 
-      const total = dimensionScores.length > 0
+      const dimensionTotal = dimensionScores.length > 0
         ? round1(dimensionScores.reduce((s, a) => s + a.score, 0) / dimensionScores.length)
-        : 0
+        : null
+
+      const hasTypeScore = selfScore !== null || peerScore !== null || leaderScore !== null
+      const typeTotal = hasTypeScore
+        ? round1(
+            (selfScore || 0) * weight.self_weight +
+            (peerScore || 0) * weight.peer_weight +
+            (leaderScore || 0) * weight.leader_weight
+          )
+        : null
+
+      const total = dimensionTotal !== null && dimensionTotal > 0
+        ? dimensionTotal
+        : (typeTotal !== null ? typeTotal : 0)
 
       return {
         user_id: user.id,
@@ -2151,7 +2164,7 @@ export const api = {
   },
 
   // 导出详细计算明细
-  async exportScoreDetail(year, quarter) {
+  async exportScoreDetail(year, quarter, userId = null) {
     await requireAuth()
     const session = await getLocalUser()
 
@@ -2159,122 +2172,334 @@ export const api = {
       throw new Error('权限不足')
     }
 
+    if (!userId) {
+      throw new Error('请选择导出用户')
+    }
+
     const weight = await this.getWeight()
 
-    const periodStart = `${year}-${(quarter - 1) * 3 + 1}-01`
-    const periodEnd = quarter === 4 ? `${year + 1}-01-01` : `${year}-${quarter * 3 + 1}-01`
-
-    const [usersData, dimensionsData, tasksData, answersData, questionsData] = await Promise.all([
+    const [profilesData, dimensionsData, tasksData, answersData, questionsData] = await Promise.all([
       supabase.from('profiles').select('*'),
       supabase.from('dimensions').select('*').order('sort_order'),
-      supabase.from('evaluation_tasks').select('*').eq('status', 'completed').gte('completed_at', periodStart).lt('completed_at', periodEnd),
+      supabase.from('evaluation_tasks')
+        .select('*')
+        .eq('target_user_id', userId)
+        .eq('year', year)
+        .eq('quarter', quarter)
+        .in('status', ['completed', 'saved']),
       supabase.from('answers').select('*'),
-      supabase.from('questions').select('*, dimensions(name)').order('dimension_id').order('sort_order')
+      supabase.from('questions').select('*, dimensions(name, sort_order)').order('dimension_id').order('sort_order')
     ])
 
-    const users = usersData.data || []
+    const profiles = profilesData.data || []
     const dimensions = dimensionsData.data || []
     const tasks = tasksData.data || []
     const answers = answersData.data || []
     const questions = questionsData.data || []
 
-    const userMap = {}
-    users.forEach(u => userMap[u.id] = u)
-
-    const round1 = (num) => Math.round((num || 0) * 10) / 10
-
-    const result = []
-    for (const user of users) {
-      const userTasks = {
-        self: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'self'),
-        peer: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'peer'),
-        leader: tasks.filter(t => t.target_user_id === user.id && t.eval_type === 'leader')
-      }
-
-      const calcTaskScore = (taskList) => {
-        if (!taskList || taskList.length === 0) return null
-        const taskIds = taskList.map(t => t.id)
-        const taskAnswers = answers.filter(a => taskIds.includes(a.task_id))
-        if (taskAnswers.length === 0) return null
-        return round1(taskAnswers.reduce((s, a) => s + a.score, 0) / taskAnswers.length)
-      }
-
-      const selfScore = calcTaskScore(userTasks.self)
-      const peerScore = calcTaskScore(userTasks.peer)
-      const leaderScore = calcTaskScore(userTasks.leader)
-
-      let totalWeight = 0
-      let totalScore = 0
-      if (selfScore !== null) { totalScore += selfScore * weight.self_weight; totalWeight += weight.self_weight }
-      if (peerScore !== null) { totalScore += peerScore * weight.peer_weight; totalWeight += weight.peer_weight }
-      if (leaderScore !== null) { totalScore += leaderScore * weight.leader_weight; totalWeight += weight.leader_weight }
-      const total = totalWeight > 0 ? round1(totalScore / totalWeight) : 0
-
-      for (const dim of dimensions) {
-        const dimQuestions = questions.filter(q => q.dimension_id === dim.id)
-        if (dimQuestions.length === 0) continue
-
-        const calcDimScore = (taskList) => {
-          if (!taskList || taskList.length === 0) return null
-          const taskIds = taskList.map(t => t.id)
-          const taskAnswers = answers.filter(a => taskIds.includes(a.task_id) && dimQuestions.map(q => q.id).includes(a.question_id))
-          if (taskAnswers.length === 0) return null
-          return round1(taskAnswers.reduce((s, a) => s + a.score, 0) / taskAnswers.length)
-        }
-
-        const selfDim = calcDimScore(userTasks.self)
-        const peerDim = calcDimScore(userTasks.peer)
-        const leaderDim = calcDimScore(userTasks.leader)
-
-        result.push({
-          '用户': user.name,
-          '部门': user.department || '',
-          '维度': dim.name,
-          '评价类型': '自评',
-          '题目数': dimQuestions.length,
-          '任务数': userTasks.self?.length || 0,
-          '平均分': selfDim
-        })
-        result.push({
-          '用户': user.name,
-          '部门': user.department || '',
-          '维度': dim.name,
-          '评价类型': '他评',
-          '题目数': dimQuestions.length,
-          '任务数': userTasks.peer?.length || 0,
-          '平均分': peerDim
-        })
-        result.push({
-          '用户': user.name,
-          '部门': user.department || '',
-          '维度': dim.name,
-          '评价类型': '领导评',
-          '题目数': dimQuestions.length,
-          '任务数': userTasks.leader?.length || 0,
-          '平均分': leaderDim
-        })
-      }
-
-      result.push({
-        '用户': user.name,
-        '部门': user.department || '',
-        '维度': '综合',
-        '评价类型': '汇总',
-        '题目数': '',
-        '任务数': '',
-        '自评均分': selfScore,
-        '他评均分': peerScore,
-        '领导评均分': leaderScore,
-        '权重': `自评${weight.self_weight} 他评${weight.peer_weight} 领导评${weight.leader_weight}`,
-        '综合得分': total
-      })
+    const profileMap = new Map(profiles.map(profile => [profile.id, profile]))
+    const targetUser = profileMap.get(userId)
+    if (!targetUser) {
+      throw new Error('未找到用户')
     }
 
-    return result
+    const round1 = (value) => Math.round((Number(value) || 0) * 10) / 10
+    const safeText = (value) => (value === null || value === undefined ? '' : String(value))
+    const uniqueValues = (values) => Array.from(new Set((values || []).filter(Boolean)))
+    const normalizeScore = (value) => {
+      const numeric = Number(value)
+      return Number.isFinite(numeric) ? numeric : null
+    }
+    const typeQuestions = {
+      self: questions.filter(question => question.type === 'self').sort((left, right) => (left.dimensions?.sort_order || 0) - (right.dimensions?.sort_order || 0) || (left.sort_order || 0) - (right.sort_order || 0)),
+      peer: questions.filter(question => question.type === 'peer').sort((left, right) => (left.dimensions?.sort_order || 0) - (right.dimensions?.sort_order || 0) || (left.sort_order || 0) - (right.sort_order || 0)),
+      leader: questions.filter(question => question.type === 'leader').sort((left, right) => (left.dimensions?.sort_order || 0) - (right.dimensions?.sort_order || 0) || (left.sort_order || 0) - (right.sort_order || 0))
+    }
+
+    const taskByType = {
+      self: tasks.filter(task => task.eval_type === 'self'),
+      peer: tasks.filter(task => task.eval_type === 'peer'),
+      leader: tasks.filter(task => task.eval_type === 'leader')
+    }
+
+    const answerByTask = new Map()
+    answers.forEach(answer => {
+      if (!answerByTask.has(answer.task_id)) {
+        answerByTask.set(answer.task_id, [])
+      }
+      answerByTask.get(answer.task_id).push(answer)
+    })
+
+    const avgFromScores = (scores) => {
+      const validScores = (scores || []).filter(score => score !== null && score !== undefined && score !== '')
+      if (validScores.length === 0) {
+        return ''
+      }
+      return round1(validScores.reduce((sum, score) => sum + Number(score || 0), 0) / validScores.length)
+    }
+
+    const taskQuestionScores = (taskList, questionId) => {
+      const values = []
+      taskList.forEach(task => {
+        const taskAnswers = answerByTask.get(task.id) || []
+        const answer = taskAnswers.find(item => item.question_id === questionId)
+        if (answer !== undefined) {
+          const score = normalizeScore(answer.score)
+          if (score !== null) {
+            values.push(score)
+          }
+        }
+      })
+      return values
+    }
+
+    const taskQuestionReasons = (taskList, questionId) => {
+      const reasons = []
+      taskList.forEach(task => {
+        const taskAnswers = answerByTask.get(task.id) || []
+        const answer = taskAnswers.find(item => item.question_id === questionId)
+        if (answer?.reason) {
+          reasons.push(answer.reason)
+        }
+      })
+      return uniqueValues(reasons).join('；')
+    }
+
+    const peerGroups = []
+    const peerGroupMap = new Map()
+    taskByType.peer.forEach(task => {
+      const reviewerId = task.reviewer_user_id || task.reviewer_name || 'unknown'
+      if (!peerGroupMap.has(reviewerId)) {
+        peerGroupMap.set(reviewerId, [])
+      }
+      peerGroupMap.get(reviewerId).push(task)
+    })
+    Array.from(peerGroupMap.entries()).forEach(([reviewerId, reviewerTasks]) => {
+      const reviewerProfile = profileMap.get(reviewerId) || {}
+      peerGroups.push({
+        id: reviewerId,
+        name: reviewerProfile.name || reviewerTasks[0]?.reviewer_name || '未知评价人',
+        tasks: reviewerTasks
+      })
+    })
+    peerGroups.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'))
+
+    const peerReviewerQuestionScores = (reviewerTasks, questionId) => {
+      const taskScores = []
+      reviewerTasks.forEach(task => {
+        const answersForTask = answerByTask.get(task.id) || []
+        const answer = answersForTask.find(item => item.question_id === questionId)
+        if (answer !== undefined) {
+          taskScores.push(Number(answer.score) || 0)
+        }
+      })
+      return avgFromScores(taskScores)
+    }
+
+    const dimensionQuestionIds = (type) => {
+      const map = new Map()
+      typeQuestions[type].forEach(question => {
+        const name = question.dimension_name || question.dimensions?.name || ''
+        if (!name) {
+          return
+        }
+        if (!map.has(name)) {
+          map.set(name, [])
+        }
+        map.get(name).push(question.id)
+      })
+      return map
+    }
+
+    const calcTypeDimensionScore = (type, dimensionName) => {
+      const questionIds = dimensionQuestionIds(type).get(dimensionName) || []
+      if (questionIds.length === 0) {
+        return ''
+      }
+
+      if (type === 'peer') {
+        const reviewerScores = peerGroups.map(group => {
+          const scores = []
+          group.tasks.forEach(task => {
+            const answersForTask = answerByTask.get(task.id) || []
+            const values = questionIds.map(questionId => {
+              const answer = answersForTask.find(item => item.question_id === questionId)
+              if (answer === undefined) {
+                return null
+              }
+              const score = normalizeScore(answer.score)
+              return score === null ? null : score
+            }).filter(value => value !== null)
+            if (values.length > 0) {
+              scores.push(avgFromScores(values))
+            }
+          })
+          return avgFromScores(scores)
+        }).filter(score => score !== '')
+        return avgFromScores(reviewerScores)
+      }
+
+      const typeTasks = taskByType[type]
+      const taskScores = typeTasks.map(task => {
+        const answersForTask = answerByTask.get(task.id) || []
+        const values = questionIds.map(questionId => {
+          const answer = answersForTask.find(item => item.question_id === questionId)
+          if (answer === undefined) {
+            return null
+          }
+          const score = normalizeScore(answer.score)
+          return score === null ? null : score
+        }).filter(value => value !== null)
+        return avgFromScores(values)
+      }).filter(score => score !== '')
+      return avgFromScores(taskScores)
+    }
+
+    const buildOverallScore = (type) => {
+      const typeTasks = taskByType[type]
+      if (typeTasks.length === 0) {
+        return ''
+      }
+
+      if (type === 'peer') {
+        const reviewerScores = peerGroups.map(group => {
+          const scores = []
+          group.tasks.forEach(task => {
+            const answersForTask = answerByTask.get(task.id) || []
+            const values = answersForTask
+              .map(answer => normalizeScore(answer.score))
+              .filter(value => value !== null)
+            if (values.length > 0) {
+              scores.push(avgFromScores(values))
+            }
+          })
+          return avgFromScores(scores)
+        }).filter(score => score !== '')
+        return avgFromScores(reviewerScores)
+      }
+
+      const scores = []
+      typeTasks.forEach(task => {
+        const answersForTask = answerByTask.get(task.id) || []
+        const values = answersForTask
+          .map(answer => normalizeScore(answer.score))
+          .filter(value => value !== null)
+        if (values.length > 0) {
+          scores.push(avgFromScores(values))
+        }
+      })
+      return avgFromScores(scores)
+    }
+
+    const buildWeightedTotal = (selfScore, peerScore, leaderScore) => {
+      const parts = [
+        { value: selfScore, weight: Number(weight.self_weight || 0) },
+        { value: peerScore, weight: Number(weight.peer_weight || 0) },
+        { value: leaderScore, weight: Number(weight.leader_weight || 0) }
+      ].filter(part => part.value !== '' && part.value !== null && part.value !== undefined)
+
+      if (parts.length === 0) {
+        return ''
+      }
+
+      const totalWeight = parts.reduce((sum, part) => sum + part.weight, 0)
+      if (totalWeight === 0) {
+        return ''
+      }
+
+      const totalScore = parts.reduce((sum, part) => sum + Number(part.value || 0) * part.weight, 0)
+      return round1(totalScore / totalWeight)
+    }
+
+    const buildRows = (type) => {
+      const headers = type === 'peer'
+        ? ['维度', '题号', '题目', '评分标准', ...peerGroups.map(group => group.name), '平均分']
+        : ['维度', '题号', '题目', '评分标准', '得分', '备注']
+      const rows = typeQuestions[type].map((question, index) => {
+        const dimensionName = question.dimension_name || question.dimensions?.name || ''
+        if (type === 'peer') {
+          const reviewerScores = peerGroups.map(group => peerReviewerQuestionScores(group.tasks, question.id))
+          const avgScore = avgFromScores(reviewerScores)
+          return [dimensionName, index + 1, safeText(question.content), safeText(question.scoring_criteria), ...reviewerScores, avgScore]
+        }
+
+        const taskList = taskByType[type]
+        return [
+          dimensionName,
+          index + 1,
+          safeText(question.content),
+          safeText(question.scoring_criteria),
+          avgFromScores(taskQuestionScores(taskList, question.id)),
+          taskQuestionReasons(taskList, question.id)
+        ]
+      })
+
+      return { headers, rows }
+    }
+    const selfSheet = buildRows('self')
+    const peerSheet = buildRows('peer')
+    const leaderSheet = buildRows('leader')
+
+    const summaryDimensionNames = Array.from(new Set([
+      ...Array.from(dimensionQuestionIds('self').keys()),
+      ...Array.from(dimensionQuestionIds('peer').keys()),
+      ...Array.from(dimensionQuestionIds('leader').keys())
+    ]))
+
+    const summaryRows = summaryDimensionNames.map(dimensionName => {
+      const selfScore = calcTypeDimensionScore('self', dimensionName)
+      const peerScore = calcTypeDimensionScore('peer', dimensionName)
+      const leaderScore = calcTypeDimensionScore('leader', dimensionName)
+      return [
+        dimensionName,
+        selfScore,
+        peerScore,
+        leaderScore,
+        buildWeightedTotal(selfScore, peerScore, leaderScore)
+      ]
+    })
+
+    if (summaryRows.length === 0) {
+      const selfScore = buildOverallScore('self')
+      const peerScore = buildOverallScore('peer')
+      const leaderScore = buildOverallScore('leader')
+      summaryRows.push(['综合', selfScore, peerScore, leaderScore, buildWeightedTotal(selfScore, peerScore, leaderScore)])
+    }
+    const radarRows = summaryRows.map(row => [
+      targetUser.name,
+      targetUser.department || '',
+      row[0],
+      row[1],
+      row[2],
+      row[3],
+      row[4]
+    ])
+
+    return {
+      user: {
+        id: targetUser.id,
+        name: targetUser.name || '',
+        department: targetUser.department || ''
+      },
+      period: {
+        year,
+        quarter
+      },
+      weights: weight,
+      sheets: {
+        self: selfSheet,
+        peer: peerSheet,
+        leader: leaderSheet,
+        summary: {
+          headers: ['维度', '自评', '他评', '领导评', '综合得分'],
+          rows: summaryRows,
+          radarHeaders: ['员工', '部门', '维度', '自评', '他评', '领导评', '综合得分'],
+          radarRows
+        }
+      }
+    }
   }
 }
-
-// 创建用户但不影响当前登录状态（用于管理员创建用户）
 export const createUserWithoutLogin = async (username, password, userData) => {
   const isolatedClient = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {

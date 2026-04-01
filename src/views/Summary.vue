@@ -4,7 +4,6 @@
       <h2>数据汇总 - {{ period.year }}年第{{ period.quarter }}季度</h2>
       <div class="header-buttons">
         <el-button @click="exportTable">导出表格</el-button>
-        <el-button @click="exportDetail">导出详细计算</el-button>
         <el-button @click="exportRadarPdf">导出雷达图PDF</el-button>
       </div>
     </div>
@@ -16,56 +15,86 @@
     </el-tabs>
 
     <div v-if="activeTab === 'ranking'">
-      <div class="ranking-card-list">
+      <div class="ranking-card-grid">
         <div
           v-for="(row, index) in summaryData"
-          :key="row.user_id"
-          class="ranking-item-card"
+          :key="`${row.user_id}-mobile`"
+          class="ranking-card-mobile"
           @click="viewRadar(row.user_id)"
         >
-          <div class="ranking-left">
-            <div class="ranking-badge">{{ index + 1 }}</div>
-            <div class="ranking-user-info">
-              <div class="ranking-name">{{ row.user_name }}</div>
-              <div class="ranking-dept">{{ row.department || '' }}</div>
+          <div class="ranking-mobile-top">
+            <div class="ranking-mobile-left">
+              <div class="ranking-badge">{{ index + 1 }}</div>
+              <div class="ranking-user-info">
+                <div class="ranking-name">{{ row.user_name }}</div>
+                <div class="ranking-dept">{{ row.department || '暂无部门' }}</div>
+              </div>
+            </div>
+            <div class="ranking-mobile-score">
+              <span class="ranking-score">{{ row.total_score?.toFixed(1) || '-' }}</span>
+              <span class="ranking-mobile-label">综合得分</span>
             </div>
           </div>
-          <div class="ranking-right">
-            <div class="ranking-score">{{ row.total_score?.toFixed(1) || '-' }}</div>
+          <div class="ranking-mobile-metrics">
+            <div class="ranking-mini-metric">
+              <span>自评</span>
+              <strong>{{ row.self_score?.toFixed(1) || '-' }}</strong>
+            </div>
+            <div class="ranking-mini-metric">
+              <span>互评</span>
+              <strong>{{ row.peer_score?.toFixed(1) || '-' }}</strong>
+            </div>
+            <div class="ranking-mini-metric">
+              <span>领导评</span>
+              <strong>{{ row.leader_score?.toFixed(1) || '-' }}</strong>
+            </div>
+          </div>
+          <div class="ranking-mobile-footer">
             <el-button size="small" round class="ranking-btn">查看雷达图</el-button>
           </div>
         </div>
       </div>
 
       <el-table :data="summaryData" border class="responsive-table summary-table ranking-desktop-table" :scrollbar-always-on="true" :row-class-name="getRowClassName">
-        <el-table-column prop="rank" label="排名" width="70" align="center">
+        <el-table-column prop="rank" label="排名" width="80" align="center">
           <template #default="{ row }"><span class="rank-badge" :class="getRankClass(row.rank)">{{ row.rank }}</span></template>
         </el-table-column>
-        <el-table-column prop="user_name" label="姓名" min-width="120" show-overflow-tooltip />
-        <el-table-column prop="department" label="部门" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="self_score" label="自评" width="90" align="center">
+        <el-table-column prop="user_name" label="姓名" width="150" show-overflow-tooltip />
+        <el-table-column prop="department" label="部门" width="140" show-overflow-tooltip />
+        <el-table-column prop="self_score" label="自评" width="88" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.self_score === 0 }">{{ row.self_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column prop="peer_score" label="互评" width="90" align="center">
+        <el-table-column prop="peer_score" label="互评" width="88" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.peer_score === 0 }">{{ row.peer_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column prop="leader_score" label="领导评" width="90" align="center">
+        <el-table-column prop="leader_score" label="领导评" width="94" align="center">
           <template #default="{ row }"><span class="score-text" :class="{ 'zero-score': row.leader_score === 0 }">{{ row.leader_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
         <el-table-column prop="total_score" label="综合得分" width="110" align="center" class-name="total-score-column">
           <template #default="{ row }"><span class="total-score">{{ row.total_score?.toFixed(1) || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="操作" width="120" align="center" fixed="right">
-          <template #default="{ row }"><el-button size="small" type="primary" link class="radar-btn" @click="viewRadar(row.user_id)">查看雷达图</el-button></template>
+        <el-table-column label="操作" width="148" align="center" fixed="right">
+          <template #default="{ row }"><el-button size="small" type="primary" plain round class="radar-btn summary-radar-btn" @click="viewRadar(row.user_id)">查看雷达图</el-button></template>
         </el-table-column>
       </el-table>
     </div>
 
     <div v-if="activeTab === 'detail'" class="detail-section">
-      <div class="user-select-wrapper">
-        <el-select v-model="selectedUser" placeholder="选择员工" @change="loadUserScore" class="user-select" filterable>
-          <el-option v-for="u in users" :key="u.id" :label="u.name" :value="u.id" />
-        </el-select>
+      <div class="detail-toolbar">
+        <div class="user-select-wrapper">
+          <el-select v-model="selectedUser" placeholder="选择员工" @change="loadUserScore" class="user-select" filterable>
+            <el-option v-for="u in users" :key="u.id" :label="u.name" :value="u.id" />
+          </el-select>
+        </div>
+        <el-button
+          type="primary"
+          round
+          class="detail-export-btn"
+          :disabled="!selectedUser"
+          @click="exportDetail"
+        >
+          导出当前用户详细计算
+        </el-button>
       </div>
 
       <div v-if="userScore" class="score-overview">
@@ -89,6 +118,28 @@
           <el-table-column prop="peer" label="他评" width="70"><template #default="{ row }">{{ row.peer?.toFixed(1) || '-' }}</template></el-table-column>
           <el-table-column prop="leader" label="领导评" width="70"><template #default="{ row }">{{ row.leader?.toFixed(1) || '-' }}</template></el-table-column>
         </el-table>
+      </div>
+
+      <div v-if="userScore" class="detail-card-list">
+        <div v-for="row in dimensionDetails" :key="row.dimension_name" class="detail-card">
+          <div class="detail-card-head">
+            <div class="detail-card-title">{{ row.dimension_name }}</div>
+          </div>
+          <div class="detail-card-grid">
+            <div class="detail-mini-metric">
+              <span>自评</span>
+              <strong>{{ row.self?.toFixed(1) || '-' }}</strong>
+            </div>
+            <div class="detail-mini-metric">
+              <span>互评</span>
+              <strong>{{ row.peer?.toFixed(1) || '-' }}</strong>
+            </div>
+            <div class="detail-mini-metric">
+              <span>领导评</span>
+              <strong>{{ row.leader?.toFixed(1) || '-' }}</strong>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
@@ -163,6 +214,25 @@
           </el-table-column>
         </el-table>
       </div>
+
+      <div v-if="radarData && radarDataCompare" class="compare-card-list">
+        <div v-for="row in compareTableData" :key="row.dimension" class="compare-card">
+          <div class="compare-card-head">
+            <div class="compare-card-title">{{ row.dimension }}</div>
+            <span class="compare-card-diff" :class="row.diffClass">{{ row.diffText }}</span>
+          </div>
+          <div class="compare-card-grid">
+            <div class="compare-mini-metric">
+              <span>{{ compareMode === 'history' ? (comparePeriodLabel || '历史') : (compareUserName || '对比') }}</span>
+              <strong>{{ row.left?.toFixed(1) || '-' }}</strong>
+            </div>
+            <div class="compare-mini-metric highlight">
+              <span>{{ selectedUserName || '当前' }}</span>
+              <strong>{{ row.right?.toFixed(1) || '-' }}</strong>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -170,10 +240,12 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { use } from 'echarts/core'
+import * as echarts from 'echarts'
 import { CanvasRenderer } from 'echarts/renderers'
 import { RadarChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
+import ExcelJS from 'exceljs'
 import api, { getCurrentUser } from '../supabase'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -308,6 +380,12 @@ const leftRadarOption = computed(() => {
         itemStyle: { color: '#2b5fec' },
         areaStyle: { opacity: 0.2 },
         lineStyle: { width: 2 },
+          label: {
+            show: true,
+            color: '#1f2937',
+            fontSize: 11,
+            formatter: ({ value }) => (value === null || value === undefined ? '' : Number(value).toFixed(1))
+          },
         label: { show: false }
       }]
     }]
@@ -452,24 +530,267 @@ const exportTable = () => {
   XLSX.writeFile(workbook, `360评价汇总_${periodStr}.xlsx`)
 }
 
+const formatExcelScore = (value) => (value === null || value === undefined ? '' : Number(value))
+
+const createRadarChartBase64 = async (dimensionRows, userName) => {
+  if (!dimensionRows.length || !userName) return null
+
+  const container = document.createElement('div')
+  container.style.position = 'fixed'
+  container.style.left = '-99999px'
+  container.style.top = '-99999px'
+  container.style.width = '760px'
+  container.style.height = '420px'
+  document.body.appendChild(container)
+
+  try {
+    const chart = echarts.init(container, null, { renderer: 'canvas', width: 760, height: 420 })
+    chart.setOption({
+      backgroundColor: '#ffffff',
+      title: {
+        text: userName + ' 能力雷达图',
+        left: 'center',
+        top: 10
+      },
+      tooltip: {},
+      radar: {
+        indicator: dimensionRows.map(row => ({ name: row[0], max: 10 })),
+        radius: '58%',
+        splitNumber: 5,
+        axisName: { color: '#374151', fontSize: 12 },
+        splitLine: { lineStyle: { color: '#e5e7eb' } },
+        splitArea: { areaStyle: { color: ['#ffffff', '#f8fafc'] } }
+      },
+      series: [{
+        type: 'radar',
+        data: [{
+          value: dimensionRows.map(row => Number(row[4] || 0)),
+          name: userName,
+          itemStyle: { color: '#2563eb' },
+          areaStyle: { opacity: 0.22 },
+          lineStyle: { width: 2 },
+          symbol: 'circle',
+          symbolSize: 6,
+          label: {
+            show: true,
+            position: 'top',
+            color: '#1f2937',
+            fontSize: 11,
+            formatter: (params) => {
+              const rawValue = Array.isArray(params?.value)
+                ? params.value[typeof params?.dimensionIndex === 'number' ? params.dimensionIndex : 0]
+                : params?.value
+              const numericValue = Number(rawValue)
+              return Number.isFinite(numericValue) ? numericValue.toFixed(1) : ''
+            }
+          }
+        }]
+      }]
+    }, true)
+    return chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' })
+  } finally {
+    const chartInstance = echarts.getInstanceByDom(container)
+    if (chartInstance) chartInstance.dispose()
+    container.remove()
+  }
+}
+const autoFitColumns = (worksheet, rows, headers, extraPadding = 2, maxWidth = 42) => {
+  worksheet.columns = headers.map((header, columnIndex) => {
+    const contentWidths = rows.map(row => {
+      const text = String(row[columnIndex] ?? '')
+      return Math.max(...text.split('\n').map(line => line.length), 0)
+    })
+    const headerWidth = Math.max(...String(header).split('\n').map(line => line.length), 0)
+    const maxContentWidth = Math.max(headerWidth, ...contentWidths, 0) + extraPadding
+    return { width: Math.min(Math.max(maxContentWidth, headerWidth + extraPadding), maxWidth) }
+  })
+}
+
+const autoFitRows = (worksheet, rows, startRow = 2, maxHeight = 96) => {
+  rows.forEach((row, index) => {
+    const excelRow = worksheet.getRow(startRow + index)
+    const lineCount = Math.max(1, ...row.map((value, columnIndex) => {
+      const text = String(value ?? '')
+      const columnWidth = Number(worksheet.columns?.[columnIndex]?.width || 12)
+      const segments = text.split('\n')
+      return segments.reduce((total, segment) => total + Math.max(1, Math.ceil(segment.length / Math.max(6, columnWidth - 2))), 0)
+    }))
+    excelRow.height = Math.min(Math.max(lineCount * 16, 20), maxHeight)
+  })
+}
+const writeTableSheet = (workbook, sheetName, headers, rows) => {
+  const worksheet = workbook.addWorksheet(sheetName)
+  worksheet.addRow(headers)
+  rows.forEach(row => worksheet.addRow(row))
+  worksheet.getRow(1).font = { bold: true, color: { argb: 'FF1F2937' } }
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    }
+  worksheet.getRow(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
+  worksheet.eachRow((row) => {
+    row.alignment = { vertical: 'middle', wrapText: true }
+  })
+  worksheet.views = [{ state: 'frozen', ySplit: 1 }]
+  autoFitColumns(worksheet, rows, headers, 4, 42)
+  worksheet.getRow(1).height = 28
+  autoFitRows(worksheet, rows, 2, 96)
+  return worksheet
+}
 const exportDetail = async () => {
   try {
+    if (!selectedUser.value) {
+      ElMessage.warning('请先选择员工')
+      return
+    }
+
     ElMessage.info('正在导出详细计算...')
-    const detailData = await api.exportScoreDetail(period.value.year, period.value.quarter)
-    if (!detailData || detailData.length === 0) {
+    const detailData = await api.exportScoreDetail(period.value.year, period.value.quarter, selectedUser.value)
+    const sheets = detailData?.sheets
+    if (!detailData?.user || !sheets) {
       ElMessage.warning('没有可导出的数据')
       return
     }
-    const worksheet = XLSX.utils.json_to_sheet(detailData)
-    const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, '详细计算')
-    XLSX.writeFile(workbook, `360详细计算_${period.value.year}Q${period.value.quarter}.xlsx`)
+
+    const hasData = [sheets.self.rows, sheets.peer.rows, sheets.leader.rows, sheets.summary.rows].some(rows => rows.length > 0)
+    if (!hasData) {
+      ElMessage.warning('没有可导出的数据')
+      return
+    }
+
+    const workbook = new ExcelJS.Workbook()
+    workbook.creator = '360-eval-frontend'
+    workbook.created = new Date()
+
+    writeTableSheet(workbook, '自评明细', sheets.self.headers, sheets.self.rows)
+    writeTableSheet(workbook, '他评明细', sheets.peer.headers, sheets.peer.rows)
+    writeTableSheet(workbook, '领导评明细', sheets.leader.headers, sheets.leader.rows)
+
+    const summarySheet = workbook.addWorksheet('汇总雷达')
+    const userName = detailData.user.name || '员工'
+    const userDepartment = detailData.user.department || ''
+    const summaryHeaders = sheets.summary.headers
+    const summaryRows = sheets.summary.rows
+    const radarHeaders = sheets.summary.radarHeaders
+    const radarRows = sheets.summary.radarRows
+    const weightText = [
+      '自评 ' + Number(detailData.weights?.self_weight || 0),
+      '他评 ' + Number(detailData.weights?.peer_weight || 0),
+      '领导评 ' + Number(detailData.weights?.leader_weight || 0)
+    ].join(' / ')
+
+    summarySheet.mergeCells(1, 1, 1, 7)
+    summarySheet.getCell('A1').value = userName + ' 能力评分汇总'
+    summarySheet.getCell('A1').font = { bold: true, size: 16, color: { argb: 'FF1F2937' } }
+    summarySheet.getCell('A1').alignment = { vertical: 'middle', horizontal: 'left' }
+
+    summarySheet.mergeCells(2, 1, 2, 7)
+    summarySheet.getCell('A2').value = '员工：' + userName + '    部门：' + (userDepartment || '暂无') + '    周期：' + period.value.year + 'Q' + period.value.quarter
+    summarySheet.getCell('A2').font = { color: { argb: 'FF4B5563' } }
+    summarySheet.getCell('A2').alignment = { vertical: 'middle', horizontal: 'left' }
+
+    summarySheet.mergeCells(3, 1, 3, 7)
+    summarySheet.getCell('A3').value = '权重：' + weightText
+    summarySheet.getCell('A3').font = { color: { argb: 'FF4B5563' } }
+    summarySheet.getCell('A3').alignment = { vertical: 'middle', horizontal: 'left' }
+
+    summarySheet.getRow(5).values = summaryHeaders
+    summarySheet.getRow(5).font = { bold: true, color: { argb: 'FF1F2937' } }
+    summarySheet.getRow(5).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    }
+    summarySheet.getRow(5).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
+
+    summaryRows.forEach((row, index) => {
+      const excelRow = summarySheet.getRow(index + 6)
+      row.forEach((value, columnIndex) => {
+        excelRow.getCell(columnIndex + 1).value = value
+      })
+      excelRow.alignment = { vertical: 'middle', wrapText: true }
+    })
+
+    const radarStartRow = summaryRows.length + 9
+    summarySheet.getCell('A' + radarStartRow).value = '雷达数据'
+    summarySheet.getCell('A' + radarStartRow).font = { bold: true, size: 14, color: { argb: 'FF1F2937' } }
+    summarySheet.getRow(radarStartRow + 1).values = radarHeaders
+    summarySheet.getRow(radarStartRow + 1).font = { bold: true, color: { argb: 'FF1F2937' } }
+    summarySheet.getRow(radarStartRow + 1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFF3F4F6' }
+    }
+    summarySheet.getRow(radarStartRow + 1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
+
+    radarRows.forEach((row, index) => {
+      const excelRow = summarySheet.getRow(radarStartRow + 2 + index)
+      row.forEach((value, columnIndex) => {
+        excelRow.getCell(columnIndex + 1).value = value
+      })
+      excelRow.alignment = { vertical: 'middle', wrapText: true }
+    })
+
+    const chartBase64 = await createRadarChartBase64(summaryRows, userName)
+    if (chartBase64) {
+      const imageId = workbook.addImage({
+        base64: chartBase64,
+        extension: 'png'
+      })
+      summarySheet.addImage(imageId, {
+        tl: { col: 8, row: 1 },
+        ext: { width: 560, height: 320 }
+      })
+    }
+
+    const measureWidth = (header, rows, columnIndex, maxWidth) => {
+      const headerWidth = Math.max(...String(header).split('\n').map(line => line.length), 0)
+      const contentWidth = Math.max(
+        ...rows.map(row => {
+          const text = String(row[columnIndex] ?? '')
+          return Math.max(...text.split('\n').map(line => line.length), 0)
+        }),
+        0
+      )
+      return Math.min(Math.max(headerWidth, contentWidth) + 4, maxWidth)
+    }
+    const combinedSummaryRows = [...summaryRows, ...radarRows]
+    const summaryColumns = [
+      measureWidth(summaryHeaders[0], combinedSummaryRows, 0, 18),
+      measureWidth(summaryHeaders[1], combinedSummaryRows, 1, 22),
+      measureWidth(summaryHeaders[2], combinedSummaryRows, 2, 36),
+      measureWidth(summaryHeaders[3], combinedSummaryRows, 3, 16),
+      measureWidth(summaryHeaders[4], combinedSummaryRows, 4, 12),
+      measureWidth(radarHeaders[5], radarRows, 5, 12),
+      measureWidth(radarHeaders[6], radarRows, 6, 12),
+      4,
+      18,
+      18,
+      18
+    ].map(width => ({ width }))
+    summarySheet.columns = summaryColumns
+    autoFitRows(summarySheet, summaryRows, 6, 60)
+    autoFitRows(summarySheet, radarRows, radarStartRow + 2, 60)
+    summarySheet.getRow(5).height = 28
+    summarySheet.getRow(radarStartRow + 1).height = 28
+    summarySheet.views = [{ state: 'frozen', ySplit: 5 }]
+
+    const buffer = await workbook.xlsx.writeBuffer()
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = (userName || '员工') + '_能力评分汇总_' + period.value.year + 'Q' + period.value.quarter + '.xlsx'
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
     ElMessage.success('导出成功')
   } catch (err) {
     ElMessage.error(err.message || '导出失败')
   }
 }
-
 const exportRadarPdf = async () => {
   if (!radarData.value) {
     ElMessage.warning('请先在雷达图页面选择员工')
@@ -645,6 +966,15 @@ onMounted(async () => {
   padding: 0 16px !important;
   height: 44px;
   border-bottom: 1px solid #f0f0f0 !important;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+.summary-table :deep(.el-table__header th .cell) {
+  white-space: nowrap !important;
+  word-break: keep-all !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .summary-table :deep(.el-table__body td) {
@@ -670,18 +1000,75 @@ onMounted(async () => {
 .summary-table :deep(.el-table__body) {
   border-radius: 0;
 }
-.ranking-item-card {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--padding-md);
-  background: var(--card-bg);
-  border-radius: var(--border-radius);
-  margin-bottom: var(--padding-sm);
-  box-shadow: var(--shadow-sm);
+
+.ranking-desktop-table {
+  width: 100%;
 }
 
-.ranking-card-list {
+.ranking-desktop-table :deep(.el-table__header-wrapper th),
+.ranking-desktop-table :deep(.el-table__body-wrapper td) {
+  white-space: nowrap;
+}
+
+.ranking-desktop-table :deep(.el-table__header-wrapper th .cell) {
+  white-space: nowrap !important;
+  word-break: keep-all !important;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  line-height: 1;
+}
+
+.ranking-desktop-table :deep(.el-table__cell) {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
+.ranking-desktop-table :deep(.el-table__header th:first-child),
+.ranking-desktop-table :deep(.el-table__body td:first-child) {
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+.ranking-desktop-table :deep(.el-table__fixed-right) {
+  box-shadow: -8px 0 18px rgba(15, 23, 42, 0.05);
+}
+
+.summary-radar-btn {
+  min-width: 112px;
+  white-space: nowrap;
+  padding: 0 14px;
+}
+
+.summary-radar-btn :deep(span) {
+  line-height: 1;
+}
+
+.ranking-desktop-table :deep(.el-button.is-round) {
+  border-radius: 999px;
+}
+.ranking-item-card,
+.ranking-card-mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 16px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border-radius: 16px;
+  margin-bottom: var(--padding-sm);
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ranking-item-card:hover,
+.ranking-card-mobile:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.09);
+}
+
+.ranking-card-grid {
   display: none;
 }
 
@@ -726,10 +1113,66 @@ onMounted(async () => {
   gap: 10px;
 }
 
+.ranking-mobile-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ranking-mobile-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ranking-mobile-score {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
 .ranking-score {
   font-size: 22px;
   font-weight: 700;
   color: var(--color-primary);
+}
+
+.ranking-mobile-label {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ranking-mobile-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ranking-mini-metric {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ranking-mini-metric span {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.ranking-mini-metric strong {
+  font-size: 15px;
+  color: var(--color-text-primary);
+}
+
+.ranking-mobile-footer {
+  display: flex;
+  justify-content: flex-end;
 }
 
 .ranking-btn {
@@ -836,8 +1279,21 @@ onMounted(async () => {
   margin-bottom: 12px;
 }
 
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
 .user-select-wrapper .el-select {
   width: 200px;
+}
+
+.detail-export-btn {
+  white-space: nowrap;
 }
 
 .user-avatar {
@@ -900,6 +1356,58 @@ onMounted(async () => {
 
 .detail-table {
   font-size: 13px;
+}
+
+.detail-card-list {
+  display: none;
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.detail-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.detail-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.detail-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.detail-card-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.detail-mini-metric {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.detail-mini-metric span {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.detail-mini-metric strong {
+  font-size: 15px;
+  color: var(--color-text-primary);
 }
 
 .score-card {
@@ -1082,7 +1590,69 @@ onMounted(async () => {
   background: white;
   border-radius: 12px;
   padding: var(--padding-md);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 06);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+}
+
+.compare-card-list {
+  display: none;
+  margin-top: 12px;
+  gap: 12px;
+}
+
+.compare-card {
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.05);
+}
+
+.compare-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+.compare-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.compare-card-diff {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.compare-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.compare-mini-metric {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.compare-mini-metric.highlight {
+  background: #eef4ff;
+}
+
+.compare-mini-metric span {
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.compare-mini-metric strong {
+  font-size: 15px;
+  color: var(--color-text-primary);
 }
 
 .table-title {
@@ -1162,6 +1732,37 @@ onMounted(async () => {
   .radar-diff {
     width: 100%;
     order: 3;
+  }
+
+  .ranking-desktop-table,
+  .detail-table-wrapper,
+  .compare-table {
+    display: none;
+  }
+
+  .ranking-card-grid,
+  .detail-card-list,
+  .compare-card-list {
+    display: grid;
+    gap: 12px;
+  }
+
+  .ranking-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-card-list {
+    grid-template-columns: 1fr;
+  }
+
+  .compare-card-list {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-mini-metric,
+  .detail-mini-metric,
+  .compare-mini-metric {
+    padding: 10px;
   }
 }
 
@@ -1247,19 +1848,7 @@ onMounted(async () => {
     display: none;
   }
 
-  .ranking-desktop-table {
-    display: none;
-  }
-
-  .ranking-card-list {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding-bottom: 16px;
-  }
-
-  .ranking-item-card {
-    padding: 12px;
+  .ranking-card-mobile {
     margin-bottom: 0;
   }
 
@@ -1270,6 +1859,24 @@ onMounted(async () => {
   .ranking-btn {
     font-size: 11px;
     padding: 3px 8px;
+  }
+
+  .ranking-mobile-metrics,
+  .detail-card-grid,
+  .compare-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ranking-mobile-top,
+  .detail-card-head,
+  .compare-card-head {
+    align-items: flex-start;
+  }
+
+  .ranking-mini-metric,
+  .detail-mini-metric,
+  .compare-mini-metric {
+    border-radius: 10px;
   }
 }
 </style>
