@@ -2465,15 +2465,17 @@ export const api = {
       const leaderScore = buildOverallScore('leader')
       summaryRows.push(['综合', selfScore, peerScore, leaderScore, buildWeightedTotal(selfScore, peerScore, leaderScore)])
     }
-    const radarRows = summaryRows.map(row => [
-      targetUser.name,
-      targetUser.department || '',
-      row[0],
-      row[1],
-      row[2],
-      row[3],
-      row[4]
-    ])
+    const radarRows = summaryRows
+      .filter(row => row[0] !== '综合')
+      .map(row => [
+        targetUser.name,
+        targetUser.department || '',
+        row[0],
+        row[1],
+        row[2],
+        row[3],
+        row[4]
+      ])
 
     return {
       user: {

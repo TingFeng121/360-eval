@@ -380,13 +380,12 @@ const leftRadarOption = computed(() => {
         itemStyle: { color: '#2b5fec' },
         areaStyle: { opacity: 0.2 },
         lineStyle: { width: 2 },
-          label: {
-            show: true,
-            color: '#1f2937',
-            fontSize: 11,
-            formatter: ({ value }) => (value === null || value === undefined ? '' : Number(value).toFixed(1))
-          },
-        label: { show: false }
+        label: {
+          show: true,
+          color: '#1f2937',
+          fontSize: 11,
+          formatter: ({ value }) => (value === null || value === undefined ? '' : Number(value).toFixed(1))
+        }
       }]
     }]
   }
@@ -545,48 +544,72 @@ const createRadarChartBase64 = async (dimensionRows, userName) => {
 
   try {
     const chart = echarts.init(container, null, { renderer: 'canvas', width: 760, height: 420 })
-    chart.setOption({
+
+    const dims = dimensionRows.map((row, idx) => ({
+      dimension_name: row[0],
+      score: Number(row[4] || 0)
+    }))
+    const values = dims.map(d => d.score !== null ? d.score : 0)
+
+    const indicators = dims.map((d, idx) => ({
+      name: `{dimName|${d.dimension_name}}\n{score|${d.score !== null ? d.score.toFixed(1) : '-'}}`,
+      max: 10,
+      axisLabel: {
+        show: idx === 0,
+        color: '#666',
+        fontSize: 10,
+        margin: 4
+      }
+    }))
+
+    const option = {
       backgroundColor: '#ffffff',
       title: {
         text: userName + ' 能力雷达图',
         left: 'center',
-        top: 10
+        top: 10,
+        textStyle: { color: '#1F2937', fontSize: 16, fontWeight: 'bold' }
       },
-      tooltip: {},
+      tooltip: {
+        trigger: 'item',
+        formatter: (params) => {
+          if (!params.value || !dimensionRows[params.dimensionIndex]) return ''
+          const dimName = dimensionRows[params.dimensionIndex][0]
+          const score = params.value[params.dimensionIndex]
+          return `${dimName}: ${score}`
+        }
+      },
       radar: {
-        indicator: dimensionRows.map(row => ({ name: row[0], max: 10 })),
-        radius: '58%',
+        indicator: indicators,
+        radius: '60%',
         splitNumber: 5,
-        axisName: { color: '#374151', fontSize: 12 },
-        splitLine: { lineStyle: { color: '#e5e7eb' } },
-        splitArea: { areaStyle: { color: ['#ffffff', '#f8fafc'] } }
+        min: 5,
+        axisName: {
+          color: '#333',
+          fontSize: 12,
+          rich: {
+            dimName: { color: '#333', fontSize: 12 },
+            score: { color: '#22c55e', fontSize: 16, fontWeight: 'bold' }
+          }
+        },
+        splitLine: { lineStyle: { color: '#ccc' } },
+        splitArea: { show: false }
       },
       series: [{
         type: 'radar',
         data: [{
-          value: dimensionRows.map(row => Number(row[4] || 0)),
-          name: userName,
+          value: values,
+          name: '得分',
           itemStyle: { color: '#2563eb' },
-          areaStyle: { opacity: 0.22 },
+          areaStyle: { opacity: 0.35 },
           lineStyle: { width: 2 },
-          symbol: 'circle',
-          symbolSize: 6,
-          label: {
-            show: true,
-            position: 'top',
-            color: '#1f2937',
-            fontSize: 11,
-            formatter: (params) => {
-              const rawValue = Array.isArray(params?.value)
-                ? params.value[typeof params?.dimensionIndex === 'number' ? params.dimensionIndex : 0]
-                : params?.value
-              const numericValue = Number(rawValue)
-              return Number.isFinite(numericValue) ? numericValue.toFixed(1) : ''
-            }
-          }
+          label: { show: false }
         }]
       }]
-    }, true)
+    }
+
+    chart.setOption(option, true)
+    await new Promise(resolve => setTimeout(resolve, 200))
     return chart.getDataURL({ type: 'png', pixelRatio: 2, backgroundColor: '#ffffff' })
   } finally {
     const chartInstance = echarts.getInstanceByDom(container)
@@ -672,8 +695,6 @@ const exportDetail = async () => {
     const userDepartment = detailData.user.department || ''
     const summaryHeaders = sheets.summary.headers
     const summaryRows = sheets.summary.rows
-    const radarHeaders = sheets.summary.radarHeaders
-    const radarRows = sheets.summary.radarRows
     const weightText = [
       '自评 ' + Number(detailData.weights?.self_weight || 0),
       '他评 ' + Number(detailData.weights?.peer_weight || 0),
@@ -712,26 +733,6 @@ const exportDetail = async () => {
       excelRow.alignment = { vertical: 'middle', wrapText: true }
     })
 
-    const radarStartRow = summaryRows.length + 9
-    summarySheet.getCell('A' + radarStartRow).value = '雷达数据'
-    summarySheet.getCell('A' + radarStartRow).font = { bold: true, size: 14, color: { argb: 'FF1F2937' } }
-    summarySheet.getRow(radarStartRow + 1).values = radarHeaders
-    summarySheet.getRow(radarStartRow + 1).font = { bold: true, color: { argb: 'FF1F2937' } }
-    summarySheet.getRow(radarStartRow + 1).fill = {
-      type: 'pattern',
-      pattern: 'solid',
-      fgColor: { argb: 'FFF3F4F6' }
-    }
-    summarySheet.getRow(radarStartRow + 1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }
-
-    radarRows.forEach((row, index) => {
-      const excelRow = summarySheet.getRow(radarStartRow + 2 + index)
-      row.forEach((value, columnIndex) => {
-        excelRow.getCell(columnIndex + 1).value = value
-      })
-      excelRow.alignment = { vertical: 'middle', wrapText: true }
-    })
-
     const chartBase64 = await createRadarChartBase64(summaryRows, userName)
     if (chartBase64) {
       const imageId = workbook.addImage({
@@ -739,7 +740,7 @@ const exportDetail = async () => {
         extension: 'png'
       })
       summarySheet.addImage(imageId, {
-        tl: { col: 8, row: 1 },
+        tl: { col: 1, row: summaryRows.length + 7 },
         ext: { width: 560, height: 320 }
       })
     }
@@ -755,15 +756,12 @@ const exportDetail = async () => {
       )
       return Math.min(Math.max(headerWidth, contentWidth) + 4, maxWidth)
     }
-    const combinedSummaryRows = [...summaryRows, ...radarRows]
     const summaryColumns = [
-      measureWidth(summaryHeaders[0], combinedSummaryRows, 0, 18),
-      measureWidth(summaryHeaders[1], combinedSummaryRows, 1, 22),
-      measureWidth(summaryHeaders[2], combinedSummaryRows, 2, 36),
-      measureWidth(summaryHeaders[3], combinedSummaryRows, 3, 16),
-      measureWidth(summaryHeaders[4], combinedSummaryRows, 4, 12),
-      measureWidth(radarHeaders[5], radarRows, 5, 12),
-      measureWidth(radarHeaders[6], radarRows, 6, 12),
+      measureWidth(summaryHeaders[0], summaryRows, 0, 18),
+      measureWidth(summaryHeaders[1], summaryRows, 1, 22),
+      measureWidth(summaryHeaders[2], summaryRows, 2, 36),
+      measureWidth(summaryHeaders[3], summaryRows, 3, 16),
+      measureWidth(summaryHeaders[4], summaryRows, 4, 12),
       4,
       18,
       18,
@@ -771,9 +769,7 @@ const exportDetail = async () => {
     ].map(width => ({ width }))
     summarySheet.columns = summaryColumns
     autoFitRows(summarySheet, summaryRows, 6, 60)
-    autoFitRows(summarySheet, radarRows, radarStartRow + 2, 60)
     summarySheet.getRow(5).height = 28
-    summarySheet.getRow(radarStartRow + 1).height = 28
     summarySheet.views = [{ state: 'frozen', ySplit: 5 }]
 
     const buffer = await workbook.xlsx.writeBuffer()
