@@ -187,6 +187,35 @@ npm run build
 
 各评价维度（能力项）单独计算得分，公式与总分相同，最终得分也是加权平均。
 
+### Excel 导出功能
+
+系统支持导出员工的完整评价数据为 Excel 文件，包含以下内容：
+
+#### 导出内容
+
+| 工作表 | 说明 |
+|--------|------|
+| 自评明细 | 员工自评各维度详细得分 |
+| 他评明细 | 同事评价各维度详细得分 |
+| 领导评明细 | 领导评价各维度详细得分 |
+| 汇总雷达 | 汇总表格 + 能力雷达图 |
+
+#### 汇总表结构
+
+| 列名 | 说明 |
+|------|------|
+| 维度 | 能力评估维度名称 |
+| 自评 | 该维度自评得分 |
+| 他评 | 该维度他评平均得分 |
+| 领导评 | 该维度领导评得分 |
+| 综合得分 | 加权平均得分 |
+
+#### 雷达图
+
+- 显示员工各维度综合得分的雷达图
+- 维度名称旁显示对应得分（绿色数字）
+- 蓝色半透明蒙版显示得分区域
+
 ### License
 
 MIT License
@@ -361,6 +390,35 @@ Assuming current weights: Self 20%, Peer 30%, Leader 50%
 #### Dimension Score Calculation
 
 Each evaluation dimension (competency) is calculated separately using the same weighted average formula.
+
+### Excel Export
+
+The system supports exporting employee evaluation data to Excel files with the following contents:
+
+#### Export Contents
+
+| Worksheet | Description |
+|-----------|-------------|
+| Self Evaluation | Employee's self-evaluation dimension scores |
+| Peer Evaluation | Colleague evaluation dimension scores |
+| Leader Evaluation | Supervisor evaluation dimension scores |
+| Summary Radar | Summary table + Competency radar chart |
+
+#### Summary Table Structure
+
+| Column | Description |
+|--------|-------------|
+| Dimension | Competency evaluation dimension name |
+| Self | Self-evaluation score for this dimension |
+| Peer | Average peer evaluation score |
+| Leader | Leader evaluation score |
+| Total Score | Weighted average score |
+
+#### Radar Chart
+
+- Displays radar chart of employee's comprehensive scores by dimension
+- Score displayed next to dimension name (green numbers)
+- Blue semi-transparent overlay shows scoring area
 
 ### License
 
