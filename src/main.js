@@ -44,27 +44,48 @@ const router = createRouter({
   routes
 })
 
+// 用户角色缓存（避免每次路由都查数据库）
+let userRoleCache = new Map()
+
 router.beforeEach(async (to, from, next) => {
   // 检查 Supabase session
   const { data: { session } } = await supabase.auth.getSession()
-  
+
   if (to.meta.requiresAuth && !session) {
     next('/login')
   } else if (to.meta.role) {
-    // 获取用户 profile
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('role')
-      .eq('id', session.user.id)
-      .single()
-      
-    if (!profile || profile.role !== to.meta.role) {
+    let userRole = userRoleCache.get(session.user.id)
+
+    // 如果缓存没有，从数据库获取并存入
+    if (!userRole) {
+      const { data: profile } = await supabase
+        .from('profiles')
+        .select('role')
+        .eq('id', session.user.id)
+        .single()
+
+      if (!profile) {
+        next('/')
+        return
+      }
+      userRole = profile.role
+      userRoleCache.set(session.user.id, userRole)
+    }
+
+    if (userRole !== to.meta.role) {
       next('/')
     } else {
       next()
     }
   } else {
     next()
+  }
+})
+
+// 登出时清除角色缓存
+supabase.auth.onAuthStateChange((event) => {
+  if (event === 'SIGNED_OUT') {
+    userRoleCache.clear()
   }
 })
 

@@ -592,6 +592,12 @@ const createRadarChartBase64 = async (dimensionRows, userName) => {
             score: { color: '#22c55e', fontSize: 16, fontWeight: 'bold' }
           }
         },
+        axisLabel: {
+          show: true,
+          color: '#666',
+          fontSize: 10,
+          margin: 4
+        },
         splitLine: { lineStyle: { color: '#ccc' } },
         splitArea: { show: false }
       },
@@ -600,10 +606,15 @@ const createRadarChartBase64 = async (dimensionRows, userName) => {
         data: [{
           value: values,
           name: '得分',
-          itemStyle: { color: '#2563eb' },
-          areaStyle: { opacity: 0.35 },
+          itemStyle: { color: '#2b5fec' },
+          areaStyle: { opacity: 0.2 },
           lineStyle: { width: 2 },
-          label: { show: false }
+          label: {
+            show: true,
+            color: '#1f2937',
+            fontSize: 11,
+            formatter: ({ value }) => (value === null || value === undefined ? '' : Number(value).toFixed(1))
+          }
         }]
       }]
     }

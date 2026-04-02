@@ -1042,25 +1042,21 @@ export const api = {
 
     if (!questions || questions.length === 0) return null
 
+    const taskIds = tasks.map(t => t.id)
     const questionIds = questions.map(q => q.id)
-    
-    // 获取该维度下所有题目的答案
-    let totalScore = 0
-    let answerCount = 0
-    
-    for (const task of tasks) {
-      const { data: answers } = await supabase
-        .from('answers')
-        .select('score')
-        .eq('task_id', task.id)
-        .in('question_id', questionIds)
-      
-      if (answers && answers.length > 0) {
-        totalScore += answers.reduce((s, a) => s + a.score, 0)
-        answerCount += answers.length
-      }
-    }
-    
+
+    // 批量获取该维度下所有题目的答案（避免 N+1 查询）
+    const { data: answers } = await supabase
+      .from('answers')
+      .select('score')
+      .in('task_id', taskIds)
+      .in('question_id', questionIds)
+
+    if (!answers || answers.length === 0) return null
+
+    const totalScore = answers.reduce((s, a) => s + a.score, 0)
+    const answerCount = answers.length
+
     return answerCount > 0 ? totalScore / answerCount : null
   },
 
@@ -2445,6 +2441,14 @@ export const api = {
       ...Array.from(dimensionQuestionIds('peer').keys()),
       ...Array.from(dimensionQuestionIds('leader').keys())
     ]))
+
+    // 按照 dimensions 的 sort_order 排序，确保与系统雷达图顺序一致
+    const dimensionNameToSortOrder = new Map(dimensions.map(d => [d.name, d.sort_order]))
+    summaryDimensionNames.sort((a, b) => {
+      const orderA = dimensionNameToSortOrder.get(a) || 0
+      const orderB = dimensionNameToSortOrder.get(b) || 0
+      return orderA - orderB
+    })
 
     const summaryRows = summaryDimensionNames.map(dimensionName => {
       const selfScore = calcTypeDimensionScore('self', dimensionName)

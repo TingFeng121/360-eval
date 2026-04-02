@@ -277,7 +277,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
@@ -293,8 +293,9 @@ import DialogFooter from '@/components/DialogFooter.vue'
 const router = useRouter()
 const currentUser = ref({})
 
-const currentYear = new Date().getFullYear()
-const currentQuarter = computed(() => Math.ceil((new Date().getMonth() + 1) / 3))
+const currentPeriod = ref({ year: 0, quarter: 0 })
+const currentYear = computed(() => currentPeriod.value.year)
+const currentQuarter = computed(() => currentPeriod.value.quarter)
 
 const stats = reactive({
   totalUsers: 0,
@@ -324,7 +325,7 @@ const taskForm = reactive({
 let peerGroupKey = 0
 const employeeList = ref([])
 const leaderList = ref([])
-const currentPeriod = ref({ year: new Date().getFullYear(), quarter: Math.ceil((new Date().getMonth() + 1) / 3) })
+
 
 const circumference = 2 * Math.PI * 42
 
@@ -470,10 +471,16 @@ onMounted(async () => {
   window.addEventListener('resize', handleResize)
 
   if (currentUser.value.role === 'admin') {
+    const p = await api.getCurrentPeriod()
+    currentPeriod.value = p
     await loadStats()
     await loadEmployeeAndLeaderList()
   }
   await loadMyPendingTasks()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', handleResize)
 })
 
 const handleResize = () => {
