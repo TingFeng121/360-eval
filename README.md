@@ -90,6 +90,47 @@ npm run build
 # 将 dist 文件夹内容上传到 Cloudflare Pages
 ```
 
+### 定时任务（防止 Supabase 暂停）
+
+为了防止 Supabase 免费项目因 7 天无活动被暂停，项目包含一个 GitHub Actions 定时任务。
+
+#### 设置步骤
+
+1. **在 GitHub 仓库中设置 Secrets**：
+
+   - 进入仓库 → Settings → Secrets and variables → Actions→Repository secrets
+   - 添加以下 secrets：
+     - `VITE_SUPABASE_URL`：你的 Supabase 项目 URL
+     - `VITE_SUPABASE_ANON_KEY`：你的 Supabase anon key
+2. **启用定时任务**：
+
+   - 定时任务会每天自动运行一次，向 Supabase API 发送请求
+   - 也可以手动触发：进入仓库 → Actions → Keep Supabase Active → Run workflow
+3. **工作原理**：
+
+   - 定时任务会调用 Supabase 的 REST API，执行一个简单的查询
+   - 这样可以保持项目活跃，避免被自动暂停
+
+#### 验证定时任务执行成功
+
+1. **查看 GitHub Actions 日志**：
+
+   - 进入 GitHub 仓库 → **Actions** → **Keep Supabase Active**
+   - 绿色勾号 = 成功，红色叉号 = 失败
+2. **手动触发测试**：
+
+   - 进入 GitHub 仓库 → **Actions** → **Keep Supabase Active**
+   - 点击右侧 **"Run workflow"** → 选择 main 分支 → **Run workflow**
+   - 刷新页面查看执行结果
+3. **查看返回状态码**：
+
+   - 点击运行记录 → **"ping-supabase"** → 展开 **"Ping Supabase API"**
+   - 返回 **200** = 成功
+4. **检查 Supabase 状态**：
+
+   - 登录 [Supabase Dashboard](https://supabase.com/dashboard)
+   - 确认项目状态为 **"Active"**
+
 ### 目录结构
 
 ```
@@ -147,11 +188,11 @@ npm run build
 
 系统支持三种评价类型的权重配置（默认权重可在此调整）：
 
-| 评价类型 | 默认权重 | 说明 |
-|---------|---------|------|
-| 自评 (Self) | 20% | 员工对自己的评价 |
-| 互评 (Peer) | 30% | 同事之间的评价 |
-| 领导评 (Leader) | 50% | 上级对下属的评价 |
+| 评价类型        | 默认权重 | 说明             |
+| --------------- | -------- | ---------------- |
+| 自评 (Self)     | 20%      | 员工对自己的评价 |
+| 互评 (Peer)     | 30%      | 同事之间的评价   |
+| 领导评 (Leader) | 50%      | 上级对下属的评价 |
 
 #### 评分计算公式
 
@@ -166,20 +207,21 @@ npm run build
 
 假设当前权重配置为：自评 20%、互评 30%、领导评 50%
 
-| 评价类型 | 实际得分 | 权重 | 加权得分 |
-|---------|---------|------|---------|
-| 自评 | 85 分 | 20% | 17 分 |
-| 互评 | 90 分 | 30% | 27 分 |
-| 领导评 | 80 分 | 50% | 40 分 |
-| **总分** | - | **100%** | **84 分** |
+| 评价类型       | 实际得分 | 权重           | 加权得分        |
+| -------------- | -------- | -------------- | --------------- |
+| 自评           | 85 分    | 20%            | 17 分           |
+| 互评           | 90 分    | 30%            | 27 分           |
+| 领导评         | 80 分    | 50%            | 40 分           |
+| **总分** | -        | **100%** | **84 分** |
 
 #### 特殊情况处理
 
 - **缺少某类评价时**：只计算有数据的类型，权重自动重新归一化
+
   - 例如：只有自评(85分，权重20%)和领导评(80分，权重50%)
   - 总分 = (85×20 + 80×50) / (20 + 50) = 81.43 分
-
 - **互评多人时**：先计算每个评价人的平均分，再对所有评价人求平均
+
   - 例如：3人互评，得分分别为 85、90、95
   - 互评最终得分 = (85 + 90 + 95) / 3 = 90 分
 
@@ -193,22 +235,22 @@ npm run build
 
 #### 导出内容
 
-| 工作表 | 说明 |
-|--------|------|
-| 自评明细 | 员工自评各维度详细得分 |
-| 他评明细 | 同事评价各维度详细得分 |
+| 工作表     | 说明                   |
+| ---------- | ---------------------- |
+| 自评明细   | 员工自评各维度详细得分 |
+| 他评明细   | 同事评价各维度详细得分 |
 | 领导评明细 | 领导评价各维度详细得分 |
-| 汇总雷达 | 汇总表格 + 能力雷达图 |
+| 汇总雷达   | 汇总表格 + 能力雷达图  |
 
 #### 汇总表结构
 
-| 列名 | 说明 |
-|------|------|
-| 维度 | 能力评估维度名称 |
-| 自评 | 该维度自评得分 |
-| 他评 | 该维度他评平均得分 |
-| 领导评 | 该维度领导评得分 |
-| 综合得分 | 加权平均得分 |
+| 列名     | 说明               |
+| -------- | ------------------ |
+| 维度     | 能力评估维度名称   |
+| 自评     | 该维度自评得分     |
+| 他评     | 该维度他评平均得分 |
+| 领导评   | 该维度领导评得分   |
+| 综合得分 | 加权平均得分       |
 
 #### 雷达图
 
@@ -351,11 +393,11 @@ Default admin account: `admin` / `admin123`
 
 The system supports weight configuration for three evaluation types (default weights can be adjusted):
 
-| Evaluation Type | Default Weight | Description |
-|----------------|----------------|-------------|
-| Self Evaluation | 20% | Employee's self-assessment |
-| Peer Evaluation | 30% | Evaluation between colleagues |
-| Leader Evaluation | 50% | Supervisor's evaluation of subordinates |
+| Evaluation Type   | Default Weight | Description                             |
+| ----------------- | -------------- | --------------------------------------- |
+| Self Evaluation   | 20%            | Employee's self-assessment              |
+| Peer Evaluation   | 30%            | Evaluation between colleagues           |
+| Leader Evaluation | 50%            | Supervisor's evaluation of subordinates |
 
 #### Scoring Formula
 
@@ -370,20 +412,21 @@ Total Score = (Self Score × Self Weight + Peer Score × Peer Weight + Leader Sc
 
 Assuming current weights: Self 20%, Peer 30%, Leader 50%
 
-| Evaluation Type | Score | Weight | Weighted Score |
-|----------------|-------|--------|----------------|
-| Self | 85 | 20% | 17 |
-| Peer | 90 | 30% | 27 |
-| Leader | 80 | 50% | 40 |
-| **Total** | - | **100%** | **84** |
+| Evaluation Type | Score | Weight         | Weighted Score |
+| --------------- | ----- | -------------- | -------------- |
+| Self            | 85    | 20%            | 17             |
+| Peer            | 90    | 30%            | 27             |
+| Leader          | 80    | 50%            | 40             |
+| **Total** | -     | **100%** | **84**   |
 
 #### Special Cases
 
 - **Missing Evaluation Type**: Only calculate types with data, weights are automatically re-normalized
+
   - Example: Only Self (85, weight 20%) and Leader (80, weight 50%)
   - Total = (85×20 + 80×50) / (20 + 50) = 81.43
-
 - **Multiple Peer Evaluators**: First calculate average score for each evaluator, then average all evaluators
+
   - Example: 3 peer evaluators, scores are 85, 90, 95
   - Peer Final Score = (85 + 90 + 95) / 3 = 90
 
@@ -397,22 +440,22 @@ The system supports exporting employee evaluation data to Excel files with the f
 
 #### Export Contents
 
-| Worksheet | Description |
-|-----------|-------------|
-| Self Evaluation | Employee's self-evaluation dimension scores |
-| Peer Evaluation | Colleague evaluation dimension scores |
-| Leader Evaluation | Supervisor evaluation dimension scores |
-| Summary Radar | Summary table + Competency radar chart |
+| Worksheet         | Description                                 |
+| ----------------- | ------------------------------------------- |
+| Self Evaluation   | Employee's self-evaluation dimension scores |
+| Peer Evaluation   | Colleague evaluation dimension scores       |
+| Leader Evaluation | Supervisor evaluation dimension scores      |
+| Summary Radar     | Summary table + Competency radar chart      |
 
 #### Summary Table Structure
 
-| Column | Description |
-|--------|-------------|
-| Dimension | Competency evaluation dimension name |
-| Self | Self-evaluation score for this dimension |
-| Peer | Average peer evaluation score |
-| Leader | Leader evaluation score |
-| Total Score | Weighted average score |
+| Column      | Description                              |
+| ----------- | ---------------------------------------- |
+| Dimension   | Competency evaluation dimension name     |
+| Self        | Self-evaluation score for this dimension |
+| Peer        | Average peer evaluation score            |
+| Leader      | Leader evaluation score                  |
+| Total Score | Weighted average score                   |
 
 #### Radar Chart
 
