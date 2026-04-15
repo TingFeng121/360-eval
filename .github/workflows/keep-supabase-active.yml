@@ -1,0 +1,25 @@
+name: Keep Supabase Active
+
+on:
+  schedule:
+    # 每天运行一次，防止 Supabase 7天无活动被暂停
+    - cron: '0 0 * * *'  # 每天 UTC 0 点运行
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Ping Supabase API
+        run: |
+          # 发送请求到 Supabase API 保持项目活跃
+          curl -s -o /dev/null -w "%{http_code}" "${{ secrets.VITE_SUPABASE_URL }}/rest/v1/profiles?select=id&limit=1" \
+            -H "apikey: ${{ secrets.VITE_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.VITE_SUPABASE_ANON_KEY }}"
+        env:
+          # 需要在 GitHub 仓库的 Secrets 中设置这些环境变量
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
