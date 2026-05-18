@@ -109,6 +109,62 @@
           </div>
         </div>
       </el-card>
+
+      <el-card class="ai-config-card">
+        <template #header>
+          <div class="card-header">
+            <span class="card-title">🤖 AI 配置</span>
+            <el-switch v-model="aiForm.enabled" :disabled="!isAdmin" @change="handleSaveAI" />
+          </div>
+        </template>
+        <div class="ai-config-content" :class="{ 'ai-disabled': !aiForm.enabled }">
+          <div class="ai-provider-select">
+            <span class="config-label">AI 提供商</span>
+            <el-select v-model="aiForm.provider" :disabled="!isAdmin || !aiForm.enabled" class="ai-select">
+              <el-option label="OpenAI" value="openai" />
+              <el-option label="Azure OpenAI" value="azure" />
+              <el-option label="自定义 API" value="custom" />
+            </el-select>
+          </div>
+
+          <div class="ai-config-item">
+            <span class="config-label">API 地址</span>
+            <el-input v-model="aiForm.api_url" placeholder="https://api.openai.com/v1" :disabled="!isAdmin || !aiForm.enabled" class="ai-input" />
+          </div>
+
+          <div class="ai-config-item">
+            <span class="config-label">API Key</span>
+            <el-input v-model="aiForm.api_key" type="password" placeholder="sk-..." :disabled="!isAdmin || !aiForm.enabled" class="ai-input" show-password />
+          </div>
+
+          <div class="ai-config-item">
+            <span class="config-label">模型</span>
+            <el-input v-model="aiForm.model" placeholder="gpt-3.5-turbo" :disabled="!isAdmin || !aiForm.enabled" class="ai-input" />
+          </div>
+
+          <div class="ai-config-row">
+            <div class="ai-config-item half">
+              <span class="config-label">温度 (Temperature)</span>
+              <el-slider v-model="aiForm.temperature" :min="0" :max="2" :step="0.1" :disabled="!isAdmin || !aiForm.enabled" size="small" />
+              <span class="config-value">{{ aiForm.temperature }}</span>
+            </div>
+
+            <div class="ai-config-item half">
+              <span class="config-label">最大令牌 (Max Tokens)</span>
+              <el-input-number v-model="aiForm.max_tokens" :min="100" :max="4000" :step="100" :disabled="!isAdmin || !aiForm.enabled" size="small" />
+            </div>
+          </div>
+
+          <div class="ai-actions" v-if="isAdmin">
+            <el-button type="primary" size="small" @click="handleSaveAI" :loading="savingAI">
+              保存配置
+            </el-button>
+            <el-button type="default" size="small" @click="handleTestAI" :loading="testingAI" :disabled="!aiForm.enabled">
+              测试连接
+            </el-button>
+          </div>
+        </div>
+      </el-card>
     </div>
 
     <el-card class="data-manage-card">
@@ -201,6 +257,19 @@ const weightForm = reactive({
   score_type: '10'
 })
 
+const aiForm = reactive({
+  enabled: false,
+  provider: 'openai',
+  api_url: 'https://api.openai.com/v1',
+  api_key: '',
+  model: 'gpt-3.5-turbo',
+  temperature: 0.7,
+  max_tokens: 1000
+})
+
+const testingAI = ref(false)
+const savingAI = ref(false)
+
 const totalWeight = computed(() => {
   return weightForm.self_weight + weightForm.peer_weight + weightForm.leader_weight
 })
@@ -238,6 +307,60 @@ const handleSaveWeight = async () => {
     ElMessage.success('权重配置保存成功')
   } catch (err) {
     ElMessage.error(err.message || '保存失败')
+  }
+}
+
+const loadAIConfig = async () => {
+  try {
+    const config = await api.getAIConfig()
+    Object.assign(aiForm, config)
+  } catch (e) {
+    console.error('加载AI配置失败', e)
+  }
+}
+
+const handleSaveAI = async () => {
+  if (isGuest.value) return ElMessage.warning('访客无权操作')
+  savingAI.value = true
+  try {
+    await api.updateAIConfig(aiForm)
+    ElMessage.success('AI配置保存成功')
+  } catch (err) {
+    ElMessage.error(err.message || '保存失败')
+  } finally {
+    savingAI.value = false
+  }
+}
+
+const handleTestAI = async () => {
+  if (isGuest.value) return ElMessage.warning('访客无权操作')
+  if (!aiForm.api_key) {
+    return ElMessage.warning('请先填写API Key')
+  }
+  testingAI.value = true
+  try {
+    const response = await fetch(`${aiForm.api_url}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${aiForm.api_key}`
+      },
+      body: JSON.stringify({
+        model: aiForm.model,
+        messages: [{ role: 'user', content: 'Hi' }],
+        max_tokens: 5
+      })
+    })
+    if (response.ok) {
+      ElMessage.success('AI连接测试成功！')
+    } else {
+      const error = await response.json().catch(() => ({}))
+      ElMessage.error(`连接失败: ${error.error?.message || error.message || response.statusText}`)
+    }
+  } catch (err) {
+    ElMessage.error(`连接失败: ${err.message}`)
+  } finally {
+    testingAI.value = false
   }
 }
 
@@ -473,6 +596,7 @@ onMounted(async () => {
   await loadCurrentUser()
   if (!configError.value && currentUser.value?.role === 'admin') {
     await loadWeightConfig()
+    await loadAIConfig()
   }
   const period = await api.getCurrentPeriod()
   if (period) {
@@ -759,6 +883,87 @@ onMounted(async () => {
 
 .weight-actions .el-button--primary:hover {
   opacity: 0.9;
+}
+
+.ai-config-card {
+  margin-top: var(--padding-md);
+  border: 1px solid var(--border-color);
+}
+
+.ai-config-card :deep(.el-card__header) {
+  border-bottom: 1px solid var(--border-color);
+  padding: var(--padding-md);
+}
+
+.ai-config-card :deep(.el-card__body) {
+  padding: var(--padding-md);
+}
+
+.ai-config-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--padding-sm);
+  transition: opacity 0.3s;
+}
+
+.ai-config-content.ai-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.ai-provider-select {
+  display: flex;
+  align-items: center;
+  gap: var(--padding-sm);
+}
+
+.ai-select {
+  width: 200px;
+}
+
+.ai-config-item {
+  display: flex;
+  align-items: center;
+  gap: var(--padding-sm);
+}
+
+.ai-config-item.half {
+  flex: 1;
+}
+
+.ai-input {
+  flex: 1;
+}
+
+.config-label {
+  width: 120px;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+
+.config-value {
+  width: 30px;
+  text-align: right;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-primary);
+}
+
+.ai-config-row {
+  display: flex;
+  gap: var(--padding-md);
+}
+
+.ai-config-row .ai-config-item {
+  flex: 1;
+}
+
+.ai-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--padding-sm);
+  padding-top: var(--padding-xs);
 }
 
 .data-manage-card {

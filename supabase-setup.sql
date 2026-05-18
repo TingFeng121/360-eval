@@ -84,6 +84,19 @@ create table if not exists public.current_period (
   updated_at timestamptz default now()
 );
 
+-- 8. 创建 ai_config 表（AI配置表）
+create table if not exists public.ai_config (
+  id integer primary key default 1 check (id = 1),
+  enabled boolean default false,
+  provider text default 'openai' check (provider in ('openai', 'azure', 'custom')),
+  api_url text default 'https://api.openai.com/v1',
+  api_key text default '',
+  model text default 'gpt-3.5-turbo',
+  temperature numeric(3,2) default 0.70,
+  max_tokens integer default 1000,
+  updated_at timestamptz default now()
+);
+
 -- =====================================================
 -- 索引
 -- =====================================================

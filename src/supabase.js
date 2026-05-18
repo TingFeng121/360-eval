@@ -1532,9 +1532,267 @@ export const api = {
 
     if (error) throw error
 
-    apiCache.del('getWeight')
+    apiCache.clear('getWeight')
 
     return { message: '权重配置更新成功' }
+  },
+
+  // 获取AI配置（带缓存）
+  async getAIConfig() {
+    const cached = apiCache.get('getAIConfig')
+    if (cached) return cached
+
+    const { data, error } = await supabase
+      .from('ai_config')
+      .select('*')
+      .eq('id', 1)
+      .single()
+
+    let config
+    if (error || !data) {
+      config = {
+        enabled: false,
+        provider: 'openai',
+        api_url: 'https://api.openai.com/v1',
+        api_key: '',
+        model: 'gpt-3.5-turbo',
+        temperature: 0.7,
+        max_tokens: 4000
+      }
+    } else {
+      config = data
+    }
+
+    apiCache.set('getAIConfig', {}, config)
+
+    return config
+  },
+
+  // 更新AI配置
+  async updateAIConfig(config) {
+    await requireAuth()
+    const session = await getLocalUser()
+
+    if (session.user.role !== 'admin') {
+      throw new Error('权限不足')
+    }
+
+    const { error } = await supabase
+      .from('ai_config')
+      .upsert({
+        id: 1,
+        enabled: config.enabled,
+        provider: config.provider,
+        api_url: config.api_url,
+        api_key: config.api_key,
+        model: config.model,
+        temperature: config.temperature,
+        max_tokens: config.max_tokens
+      })
+
+    if (error) throw error
+
+    apiCache.clear('getAIConfig')
+
+    return { message: 'AI配置更新成功' }
+  },
+
+  // 获取用户评价详情（用于AI分析）
+  async getUserEvaluationDetail(userId) {
+    await requireAuth()
+
+    const period = await this.getCurrentPeriod()
+
+    const { data: tasks } = await supabase
+      .from('evaluation_tasks')
+      .select('id, eval_type, status, target_user_id, reviewer_user_id')
+      .eq('target_user_id', userId)
+      .eq('year', period.year)
+      .eq('quarter', period.quarter)
+
+    if (!tasks || tasks.length === 0) {
+      return { user: null, evaluations: [], scores: {} }
+    }
+
+    const taskIds = tasks.map(t => t.id)
+
+    const { data: answers } = await supabase
+      .from('answers')
+      .select('task_id, question_id, score, comment')
+      .in('task_id', taskIds)
+
+    const questionIds = [...new Set(answers.map(a => a.question_id))]
+    const { data: questions } = await supabase
+      .from('questions')
+      .select('id, content, type, dimension_id')
+      .in('id', questionIds)
+
+    const { data: dimensions } = await supabase
+      .from('dimensions')
+      .select('id, name')
+
+    const { data: reviewerProfiles } = await supabase
+      .from('profiles')
+      .select('id, name, role')
+      .in('id', tasks.map(t => t.reviewer_user_id))
+
+    const reviewerMap = {}
+    reviewerProfiles.forEach(r => { reviewerMap[r.id] = r })
+
+    const questionMap = {}
+    questions.forEach(q => { questionMap[q.id] = q })
+
+    const dimensionMap = {}
+    dimensions.forEach(d => { dimensionMap[d.id] = d })
+
+    const evaluations = []
+    const scores = { self: [], peer: [], leader: [] }
+
+    tasks.forEach(task => {
+      const taskAnswers = answers.filter(a => a.task_id === task.id)
+      const reviewer = reviewerMap[task.reviewer_user_id]
+
+      const evalItem = {
+        type: task.eval_type,
+        reviewer_name: reviewer?.name || '未知',
+        reviewer_role: reviewer?.role || '',
+        status: task.status,
+        answers: taskAnswers.map(a => ({
+          question: questionMap[a.question_id]?.content || '',
+          question_type: questionMap[a.question_id]?.type || '',
+          dimension: dimensionMap[questionMap[a.question_id]?.dimension_id]?.name || '',
+          score: a.score,
+          comment: a.comment || ''
+        }))
+      }
+
+      evaluations.push(evalItem)
+
+      taskAnswers.forEach(a => {
+        if (scores[task.eval_type]) {
+          scores[task.eval_type].push(a.score)
+        }
+      })
+    })
+
+    const { data: user } = await supabase
+      .from('profiles')
+      .select('name, department, role')
+      .eq('id', userId)
+      .single()
+
+    return { user, evaluations, scores }
+  },
+
+  // AI分析评价数据
+  async analyzeEvaluation(userId) {
+    await requireAuth()
+
+    const config = await this.getAIConfig()
+    if (!config.enabled || !config.api_url || !config.api_key) {
+      throw new Error('AI功能未启用或配置不完整')
+    }
+
+    const detail = await this.getUserEvaluationDetail(userId)
+    if (!detail.user) {
+      throw new Error('未找到用户评价数据')
+    }
+
+    const selfAvg = detail.scores.self.length ? (detail.scores.self.reduce((a,b) => a+b, 0) / detail.scores.self.length).toFixed(1) : 0
+    const peerAvg = detail.scores.peer.length ? (detail.scores.peer.reduce((a,b) => a+b, 0) / detail.scores.peer.length).toFixed(1) : 0
+    const leaderAvg = detail.scores.leader.length ? (detail.scores.leader.reduce((a,b) => a+b, 0) / detail.scores.leader.length).toFixed(1) : 0
+
+    const evalSummary = detail.evaluations.map(e => {
+      const type = e.type === 'self' ? '自评' : e.type === 'peer' ? '同事' : '领导'
+      const avg = e.answers.length ? (e.answers.reduce((sum, a) => sum + a.score, 0) / e.answers.length).toFixed(1) : '0'
+      return `${type}(${e.reviewer_name}): ${avg}分`
+    }).join('; ')
+
+    const prompt = `你是一个专业的360度评价分析师。
+
+【分析任务】
+根据以下员工360评价数据，撰写一份专业的人事测评分析报告。
+
+【员工信息】
+姓名：${detail.user.name}，部门：${detail.user.department || '未填写'}，岗位：${detail.user.role}
+
+【评分数据】
+自评${detail.scores.self.length}题均分${selfAvg}，他评${detail.scores.peer.length}题均分${peerAvg}，领导评${detail.scores.leader.length}题均分${leaderAvg}
+
+【达标标准】
+6分为及格线
+
+请直接输出以下格式的分析报告，不要包含任何思考过程、计算步骤或英文说明：
+
+一、员工360评分总览
+（写出各维度得分、平均分、评分差值分析）
+
+二、各题目达标判定
+（对照6分标准，逐项列出达标/未达标情况）
+
+三、三维评价差异分析
+（分析自评偏差原因、领导关注点、同事共识、隐藏问题）
+
+四、核心优势与现存短板
+（按能力层、态度层、协作层、执行力层分别总结）
+
+五、个性化提升改进方案
+（给出可执行措施、能力提升建议、团队协作优化建议、管理者辅导建议）
+
+六、综合评级与任用建议
+（给出评级结果、是否需要绩效辅导、岗位适配度，培养方向）
+
+语言要求：全程中文，格式规范，可直接作为人事测评报告使用。
+`.trim()
+
+    const response = await fetch(`${config.api_url}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${config.api_key}`
+      },
+      body: JSON.stringify({
+        model: config.model,
+        messages: [
+          { role: 'system', content: '你是一个专业的360度评价分析师。你的任务是根据用户提供的评价数据，直接输出专业的人事测评分析报告。你必须严格遵守以下规则：1. 只输出最终报告，不要输出任何思考过程、计算步骤、英文说明或调试信息。2. 必须全程使用中文。3. 报告格式必须严格按照用户指定的六个部分输出。4. 语言必须专业、正式、严谨，可直接作为人事测评报告使用。禁止输出任何思考过程。' },
+          { role: 'user', content: prompt }
+        ],
+        max_tokens: Math.max(config.max_tokens || 4000, 2000),
+        temperature: Math.min(Math.max(config.temperature || 0.7, 0), 1)
+      })
+    })
+
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({}))
+      throw new Error(error.error?.message || error.message || 'AI分析失败')
+    }
+
+    const data = await response.json()
+    const choice = data.choices?.[0]
+    let content = choice?.message?.content || ''
+
+    if (!content && choice?.message?.reasoning) {
+      const reasoning = choice.message.reasoning
+      const sections = reasoning.split(/(?=[一二三四五六])/)
+      let extractedContent = ''
+      for (const section of sections) {
+        if (/[一二三四五六]、/.test(section)) {
+          extractedContent += section + '\n'
+        }
+      }
+      if (extractedContent.trim()) {
+        content = extractedContent.trim()
+      }
+    }
+
+    if (!content) {
+      throw new Error('AI返回内容为空，请稍后重试')
+    }
+    
+    return {
+      summary: content || 'AI分析失败，请稍后重试',
+      rawData: detail
+    }
   },
 
   // 获取统计结果 (管理员) - 优化版

@@ -12,6 +12,7 @@
       <el-tab-pane label="总分排名" name="ranking"></el-tab-pane>
       <el-tab-pane label="维度明细" name="detail"></el-tab-pane>
       <el-tab-pane label="能力雷达图" name="radar"></el-tab-pane>
+      <el-tab-pane label="AI分析报告" name="ai-analysis"></el-tab-pane>
     </el-tabs>
 
     <div v-if="activeTab === 'ranking'">
@@ -234,6 +235,112 @@
         </div>
       </div>
     </div>
+
+    <div v-if="activeTab === 'ai-analysis'" class="ai-analysis-section">
+      <div class="ai-analysis-header">
+        <div class="ai-analysis-title">🤖 AI 智能分析报告</div>
+        <div class="ai-analysis-desc">基于360度评价数据，AI自动生成专业分析报告</div>
+      </div>
+
+      <div class="ai-analysis-toolbar">
+        <el-select v-model="aiSelectedUser" placeholder="选择员工" class="user-select" filterable>
+          <el-option v-for="u in users" :key="u.id" :label="u.name" :value="u.id" />
+        </el-select>
+        <el-button
+          type="primary"
+          :disabled="!aiSelectedUser || analyzingAI"
+          :loading="analyzingAI"
+          @click="handleAI分析"
+        >
+          <span v-if="!analyzingAI">生成分析报告</span>
+          <span v-else>AI分析中...</span>
+        </el-button>
+        <el-button
+          v-if="aiAnalysisResult"
+          type="default"
+          @click="exportAIReport"
+        >
+          <span>📥 导出报告</span>
+        </el-button>
+      </div>
+
+      <div v-if="aiAnalysisResult" class="ai-analysis-content">
+        <div class="ai-report-card">
+          <div class="report-header">
+            <div class="report-title">
+              <span class="report-icon">📋</span>
+              <span>{{ aiAnalysisResult.user?.name || '员工' }} 的360度评价分析报告</span>
+            </div>
+            <div class="report-meta">
+              <span class="meta-item">部门：{{ aiAnalysisResult.user?.department || '未填写' }}</span>
+              <span class="meta-divider">|</span>
+              <span class="meta-item">生成时间：{{ new Date().toLocaleString('zh-CN') }}</span>
+            </div>
+          </div>
+
+          <div class="report-scores">
+            <div class="score-badge">
+              <span class="score-label">自评</span>
+              <span class="score-num">{{ aiAnalysisResult.scores.self.length ? (aiAnalysisResult.scores.self.reduce((a,b) => a+b, 0) / aiAnalysisResult.scores.self.length).toFixed(1) : '-' }}</span>
+            </div>
+            <div class="score-badge">
+              <span class="score-label">他评</span>
+              <span class="score-num">{{ aiAnalysisResult.scores.peer.length ? (aiAnalysisResult.scores.peer.reduce((a,b) => a+b, 0) / aiAnalysisResult.scores.peer.length).toFixed(1) : '-' }}</span>
+            </div>
+            <div class="score-badge highlight">
+              <span class="score-label">领导评</span>
+              <span class="score-num">{{ aiAnalysisResult.scores.leader.length ? (aiAnalysisResult.scores.leader.reduce((a,b) => a+b, 0) / aiAnalysisResult.scores.leader.length).toFixed(1) : '-' }}</span>
+            </div>
+          </div>
+
+          <div class="report-body">
+            <div class="analysis-section">
+              <div class="section-title">
+                <span class="section-icon">🤖</span>
+                <span>AI 分析报告</span>
+              </div>
+              <div class="section-content ai-report-content" v-html="renderMarkdown(aiAnalysisResult.summary)"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div v-else-if="aiAnalysisError" class="ai-error">
+        <div class="error-icon">❌</div>
+        <div class="error-message">{{ aiAnalysisError }}</div>
+      </div>
+
+      <div v-else class="ai-empty">
+        <div class="empty-icon">🤔</div>
+        <div class="empty-title">选择员工并生成分析报告</div>
+        <div class="empty-desc">AI将基于该员工的360度评价数据生成专业分析报告</div>
+      </div>
+
+      <div v-if="reportHistory.length > 0" class="ai-report-history">
+        <div class="history-header">
+          <span class="history-title">📊 报告历史</span>
+          <span class="history-count">共 {{ reportHistory.length }} 份</span>
+        </div>
+        <div class="history-list">
+          <div
+            v-for="(report, index) in reportHistory"
+            :key="index"
+            class="history-item"
+            @click="loadReportFromHistory(report)"
+          >
+            <div class="history-info">
+              <span class="history-name">{{ report.userName }}</span>
+              <span class="history-time">{{ report.timestamp }}</span>
+            </div>
+            <div class="history-scores">
+              <span class="mini-score">自评: {{ report.selfScore }}</span>
+              <span class="mini-score">他评: {{ report.peerScore }}</span>
+              <span class="mini-score">领导: {{ report.leaderScore }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -246,6 +353,7 @@ import { RadarChart } from 'echarts/charts'
 import { TitleComponent, TooltipComponent, LegendComponent } from 'echarts/components'
 import VChart from 'vue-echarts'
 import ExcelJS from 'exceljs'
+import { marked } from 'marked'
 import api, { getCurrentUser } from '../supabase'
 import * as XLSX from 'xlsx'
 import { jsPDF } from 'jspdf'
@@ -276,6 +384,33 @@ const availablePeriods = ref([])
 const rightChartRef = ref(null)
 const leftChartRef = ref(null)
 const showUserDropdown = ref(false)
+
+const aiSelectedUser = ref(null)
+const aiAnalysisResult = ref(null)
+const aiAnalysisError = ref(null)
+const analyzingAI = ref(false)
+const reportHistory = ref([])
+
+const loadReportHistory = () => {
+  try {
+    const saved = localStorage.getItem('ai-report-history')
+    if (saved) {
+      reportHistory.value = JSON.parse(saved)
+    }
+  } catch (e) {
+    console.error('Failed to load report history:', e)
+  }
+}
+
+const saveReportHistory = () => {
+  try {
+    localStorage.setItem('ai-report-history', JSON.stringify(reportHistory.value))
+  } catch (e) {
+    console.error('Failed to save report history:', e)
+  }
+}
+
+loadReportHistory()
 
 const otherUsers = computed(() => users.value.filter(u => u.id !== selectedUser.value))
 const selectedUserName = computed(() => users.value.find(u => u.id === selectedUser.value)?.name || '')
@@ -461,6 +596,140 @@ const loadUsers = async () => {
 const loadUserScore = async (userId) => {
   if (!userId) return
   userScore.value = await api.getScore(userId)
+}
+
+const handleAI分析 = async () => {
+  if (!aiSelectedUser.value) return
+  analyzingAI.value = true
+  aiAnalysisError.value = null
+  
+  try {
+    const result = await api.analyzeEvaluation(aiSelectedUser.value)
+    aiAnalysisResult.value = {
+      ...result.rawData,
+      summary: result.summary
+    }
+    
+    const user = users.value.find(u => u.id === aiSelectedUser.value)
+    const selfAvg = result.rawData.scores.self.length ? (result.rawData.scores.self.reduce((a,b) => a+b, 0) / result.rawData.scores.self.length).toFixed(1) : '-'
+    const peerAvg = result.rawData.scores.peer.length ? (result.rawData.scores.peer.reduce((a,b) => a+b, 0) / result.rawData.scores.peer.length).toFixed(1) : '-'
+    const leaderAvg = result.rawData.scores.leader.length ? (result.rawData.scores.leader.reduce((a,b) => a+b, 0) / result.rawData.scores.leader.length).toFixed(1) : '-'
+    
+    reportHistory.value.unshift({
+      userId: aiSelectedUser.value,
+      userName: user?.name || '未知',
+      timestamp: new Date().toLocaleString('zh-CN'),
+      selfScore: selfAvg,
+      peerScore: peerAvg,
+      leaderScore: leaderAvg,
+      data: aiAnalysisResult.value
+    })
+    
+    if (reportHistory.value.length > 10) {
+      reportHistory.value = reportHistory.value.slice(0, 10)
+    }
+    
+    saveReportHistory()
+    
+    ElMessage.success('AI分析报告生成成功')
+  } catch (err) {
+    aiAnalysisError.value = err.message
+    ElMessage.error('AI分析失败: ' + err.message)
+  } finally {
+    analyzingAI.value = false
+  }
+}
+
+const exportAIReport = () => {
+  if (!aiAnalysisResult.value) return
+  
+  const user = aiAnalysisResult.value.user
+  const report = `
+# ${user?.name || '员工'} 的360度评价分析报告
+
+## 基本信息
+- 姓名：${user?.name || '未填写'}
+- 部门：${user?.department || '未填写'}
+- 岗位：${user?.role || '未填写'}
+- 生成时间：${new Date().toLocaleString('zh-CN')}
+
+## 评分概览
+- 自评平均分：${aiAnalysisResult.value.scores.self.length ? (aiAnalysisResult.value.scores.self.reduce((a,b) => a+b, 0) / aiAnalysisResult.value.scores.self.length).toFixed(1) : '-'}
+- 他评平均分：${aiAnalysisResult.value.scores.peer.length ? (aiAnalysisResult.value.scores.peer.reduce((a,b) => a+b, 0) / aiAnalysisResult.value.scores.peer.length).toFixed(1) : '-'}
+- 领导评平均分：${aiAnalysisResult.value.scores.leader.length ? (aiAnalysisResult.value.scores.leader.reduce((a,b) => a+b, 0) / aiAnalysisResult.value.scores.leader.length).toFixed(1) : '-'}
+
+## AI分析报告
+
+${aiAnalysisResult.value.summary}
+  `.trim()
+  
+  const blob = new Blob([report], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${user?.name || '员工'}_360评价分析报告_${new Date().toISOString().split('T')[0]}.md`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('报告导出成功')
+}
+
+const loadReportFromHistory = (report) => {
+  aiSelectedUser.value = report.userId
+  aiAnalysisResult.value = report.data
+  aiAnalysisError.value = null
+}
+
+const parseAnalysisSection = (sectionName) => {
+  if (!aiAnalysisResult.value?.summary) return '暂无分析内容'
+  
+  const summary = aiAnalysisResult.value.summary
+  
+  const sections = {
+    '总体评价': ['1.', '一、', '总体评价', '综合评分', '整体表现'],
+    '优势分析': ['2.', '二、', '优势分析', '做得好', '优点'],
+    '改进建议': ['3.', '三、', '改进建议', '需要改进', '不足'],
+    '发展建议': ['4.', '四、', '发展建议', '未来发展']
+  }
+  
+  const keywords = sections[sectionName] || []
+  const allSectionKeywords = Object.values(sections).flat()
+  
+  let startIdx = -1
+  for (const keyword of keywords) {
+    const idx = summary.indexOf(keyword)
+    if (idx !== -1 && (startIdx === -1 || idx < startIdx)) {
+      startIdx = idx
+    }
+  }
+  
+  if (startIdx === -1) {
+    if (sectionName === '总体评价') {
+      return summary.substring(0, 500).trim() || '暂无相关内容'
+    }
+    return '暂无相关内容'
+  }
+  
+  let endIdx = summary.length
+  for (const otherSection of Object.keys(sections)) {
+    if (otherSection === sectionName) continue
+    for (const keyword of sections[otherSection]) {
+      const idx = summary.indexOf(keyword)
+      if (idx !== -1 && idx > startIdx && idx < endIdx) {
+        endIdx = idx
+      }
+    }
+  }
+  
+  let content = summary.substring(startIdx, endIdx).trim()
+  
+  for (const keyword of keywords) {
+    content = content.replace(new RegExp('^' + keyword + '[：:]?\\s*', 'g'), '')
+    content = content.replace(new RegExp('^' + keyword + '\\s*', 'g'), '')
+  }
+  
+  content = content.replace(/^\d+[\.\uff0e、]\s*/, '').trim()
+  
+  return content || '暂无相关内容'
 }
 
 const loadRadar = async (userId) => {
@@ -835,6 +1104,11 @@ const exportRadarPdf = async () => {
     console.error('导出失败:', err)
     ElMessage.error('导出失败')
   }
+}
+
+const renderMarkdown = (text) => {
+  if (!text) return ''
+  return marked.parse(text)
 }
 
 onMounted(async () => {
@@ -1679,6 +1953,331 @@ onMounted(async () => {
 
 .period-select {
   max-width: clamp(150px, 30vw, 180px);
+}
+
+/* ============================================
+   AI 分析报告
+   ============================================ */
+.ai-analysis-section {
+  padding: var(--padding-md);
+}
+
+.ai-analysis-header {
+  text-align: center;
+  margin-bottom: var(--margin-lg);
+}
+
+.ai-analysis-title {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.ai-analysis-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.ai-analysis-toolbar {
+  display: flex;
+  gap: var(--padding-sm);
+  justify-content: center;
+  margin-bottom: var(--margin-lg);
+}
+
+.ai-analysis-content {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.ai-report-card {
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-base);
+  overflow: hidden;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+}
+
+.report-header {
+  background: linear-gradient(135deg, var(--color-primary) 0%, #4f46e5 100%);
+  padding: var(--padding-lg);
+  color: white;
+}
+
+.report-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.report-icon {
+  font-size: 24px;
+}
+
+.report-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--padding-sm);
+  font-size: 13px;
+  opacity: 0.9;
+}
+
+.meta-divider {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.report-scores {
+  display: flex;
+  justify-content: center;
+  gap: var(--padding-lg);
+  padding: var(--padding-lg);
+  background: #f8fafc;
+}
+
+.score-badge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--padding-md);
+  background: white;
+  border-radius: 12px;
+  min-width: 100px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.score-badge.highlight {
+  border: 2px solid var(--color-primary);
+}
+
+.score-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.score-num {
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.report-body {
+  padding: var(--padding-lg);
+}
+
+.analysis-section {
+  margin-bottom: var(--margin-lg);
+}
+
+.analysis-section:last-child {
+  margin-bottom: 0;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: var(--padding-sm);
+}
+
+.section-icon {
+  font-size: 20px;
+}
+
+.section-content {
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--text-primary);
+  padding: var(--padding-md);
+  background: #f8fafc;
+  border-radius: var(--border-radius-base);
+}
+
+.section-content.ai-full-content {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.section-content.ai-report-content {
+  line-height: 1.8;
+  font-size: 14px;
+}
+
+.section-content.ai-report-content :deep(h1) {
+  font-size: 22px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 20px 0 16px 0;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #3b82f6;
+}
+
+.section-content.ai-report-content :deep(h2) {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  margin: 20px 0 12px 0;
+  padding: 8px 0;
+  border-bottom: 2px solid #3b82f6;
+}
+
+.section-content.ai-report-content :deep(h3) {
+  font-size: 16px;
+  font-weight: 600;
+  color: #374151;
+  margin: 16px 0 8px 0;
+}
+
+.section-content.ai-report-content :deep(p) {
+  margin: 8px 0;
+  color: #4b5563;
+}
+
+.section-content.ai-report-content :deep(ul),
+.section-content.ai-report-content :deep(ol) {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+
+.section-content.ai-report-content :deep(li) {
+  margin: 4px 0;
+  color: #4b5563;
+}
+
+.section-content.ai-report-content :deep(strong) {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+.section-content.ai-report-content :deep(code) {
+  background: #f3f4f6;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #dc2626;
+}
+
+.ai-empty,
+.ai-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+
+.empty-icon,
+.error-icon {
+  font-size: 64px;
+  margin-bottom: var(--margin-base);
+}
+
+.empty-title,
+.error-message {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.empty-desc {
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.error-message {
+  color: #ef4444;
+}
+
+/* ============================================
+   报告历史
+   ============================================ */
+.ai-report-history {
+  margin-top: var(--margin-lg);
+  max-width: 900px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.history-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--padding-md);
+}
+
+.history-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.history-count {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.history-list {
+  background: white;
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-base);
+  overflow: hidden;
+}
+
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--padding-md);
+  cursor: pointer;
+  transition: background-color 0.2s;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-item:hover {
+  background-color: #f8fafc;
+}
+
+.history-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.history-name {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.history-time {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.history-scores {
+  display: flex;
+  gap: var(--padding-sm);
+}
+
+.mini-score {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: #f1f5f9;
+  border-radius: 4px;
+  color: var(--text-secondary);
 }
 
 /* ============================================
