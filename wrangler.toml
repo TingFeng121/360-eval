@@ -1,8 +1,4 @@
 name = "360-eval-system"
-type = "static"
+compatibility_date = "2024-01-01"
 
-[build]
-command = "npm install && npm run build"
-
-[env]
-NODE_ENV = "production"
+pages_build_output_dir = "dist"
