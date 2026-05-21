@@ -4,6 +4,7 @@ import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
 import './styles/index.css'
 import { supabase } from './supabase'
+import { apiCache } from './cache'
 import App from './App.vue'
 import Login from './views/Login.vue'
 import Layout from './views/Layout.vue'
@@ -50,18 +51,24 @@ let userRoleCache = new Map()
 router.beforeEach(async (to, from, next) => {
   // 检查 Supabase session
   const { data: { session } } = await supabase.auth.getSession()
+  
+  // 同时检查缓存中的用户信息（支持临时token登录）
+  const cachedUser = apiCache.getUser()
 
-  if (to.meta.requiresAuth && !session) {
+  // 如果需要认证但既没有session也没有缓存用户，重定向到登录页
+  if (to.meta.requiresAuth && !session && !cachedUser) {
     next('/login')
   } else if (to.meta.role) {
-    let userRole = userRoleCache.get(session.user.id)
+    // 获取用户ID（优先从session，其次从缓存）
+    const userId = session?.user?.id || cachedUser?.id
+    let userRole = userRoleCache.get(userId)
 
     // 如果缓存没有，从数据库获取并存入
     if (!userRole) {
       const { data: profile } = await supabase
         .from('profiles')
         .select('role')
-        .eq('id', session.user.id)
+        .eq('id', userId)
         .single()
 
       if (!profile) {
@@ -69,7 +76,7 @@ router.beforeEach(async (to, from, next) => {
         return
       }
       userRole = profile.role
-      userRoleCache.set(session.user.id, userRole)
+      userRoleCache.set(userId, userRole)
     }
 
     if (userRole !== to.meta.role) {

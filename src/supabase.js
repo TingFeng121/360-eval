@@ -29,37 +29,74 @@ function hashPassword(password) {
   return btoa(unescape(encodeURIComponent(password + '_360eval')))
 }
 
-// Supabase Auth 会自动存储 session 到 localStorage
-// 我们只需要从 Supabase 获取当前 session
+// 获取当前用户（优先从 Supabase session，其次从缓存）
 async function getLocalUser() {
+  // 先尝试从 Supabase Auth 获取 session
   const { data: { session } } = await supabase.auth.getSession()
-  if (!session) return null
   
-  // 获取用户 profile
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('id', session.user.id)
-    .single()
+  if (session) {
+    // 获取用户 profile
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+      
+    if (!profile) {
+      await supabase.auth.signOut()
+      return null
+    }
     
-  if (!profile) {
-    await supabase.auth.signOut()
-    return null
+    const user = {
+      id: profile.id,
+      username: profile.username,
+      role: profile.role,
+      name: profile.name,
+      department: profile.department,
+      permissions: parsePermissions(profile.permissions)
+    }
+
+    return {
+      user: user,
+      token: session.access_token
+    }
   }
   
-  const user = {
-    id: profile.id,
-    username: profile.username,
-    role: profile.role,
-    name: profile.name,
-    department: profile.department,
-    permissions: parsePermissions(profile.permissions)
+  // 如果没有 Supabase session，尝试从缓存获取用户（临时token登录情况）
+  const cachedUser = apiCache.getUser()
+  if (cachedUser) {
+    // 尝试从数据库获取最新的用户信息
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', cachedUser.id)
+      .single()
+      
+    if (profile) {
+      const user = {
+        id: profile.id,
+        username: profile.username,
+        role: profile.role,
+        name: profile.name,
+        department: profile.department,
+        permissions: parsePermissions(profile.permissions)
+      }
+      
+      // 更新缓存
+      apiCache.setUser(user)
+      
+      // 返回临时token
+      return {
+        user: user,
+        token: btoa(JSON.stringify({ 
+          userId: profile.id, 
+          expires: Date.now() + 86400000 
+        }))
+      }
+    }
   }
-
-  return {
-    user: user,
-    token: session.access_token
-  }
+  
+  return null
 }
 
 function parsePermissions(perm) {
@@ -127,9 +164,8 @@ async function requireAuth() {
 // =====================================================
 
 export const api = {
-  // 登录 (使用 Supabase Auth)
+  // 登录 (使用自定义密码验证)
   async login(username, password) {
-    // 先通过 username 查询 profile
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -140,15 +176,8 @@ export const api = {
       throw new Error('用户名不存在')
     }
 
-    // 尝试使用 email 登录 (Supabase Auth 使用邮箱)
-    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-      email: profile.email || `${username}@test.com`,
-      password: password
-    })
-
-    if (authError) {
-      throw new Error('密码错误')
-    }
+    const storedHash = profile.password_hash
+    const inputHash = hashPassword(password)
 
     const user = {
       id: profile.id,
@@ -156,10 +185,75 @@ export const api = {
       role: profile.role,
       name: profile.name,
       department: profile.department,
-      permissions: profile.permissions
+      permissions: parsePermissions(profile.permissions)
     }
+
+    // 如果没有 password_hash，先尝试通过 Supabase Auth 登录
+    if (!storedHash) {
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: profile.email || `${username}@test.com`,
+        password: password
+      })
+
+      if (authError) {
+        throw new Error('登录失败：' + authError.message)
+      }
+
+      // 登录成功后，同步存储 password_hash 到 profiles
+      await supabase
+        .from('profiles')
+        .update({ password_hash: inputHash })
+        .eq('id', profile.id)
+
+      // 保存用户信息到缓存
+      apiCache.setUser(user)
+      
+      return { token: authData.session.access_token, user }
+    }
+
+    if (storedHash !== inputHash) {
+      throw new Error('密码错误')
+    }
+
+    // password_hash 验证通过，尝试获取 Supabase Auth session
+    const { data: existingSession } = await supabase.auth.getSession()
+    if (existingSession?.session?.refresh_token) {
+      try {
+        const { data: refreshedData, error: refreshError } = await supabase.auth.refreshSession({
+          refresh_token: existingSession.session.refresh_token
+        })
+        if (!refreshError && refreshedData.session) {
+          apiCache.setUser(user)
+          return { token: refreshedData.session.access_token, user }
+        }
+      } catch (e) {
+        // ignore refresh error
+      }
+    }
+
+    // 尝试使用 Supabase Auth 登录（可能是新用户或 session 已过期）
+    const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+      email: profile.email || `${username}@test.com`,
+      password: password
+    })
+
+    if (!authError && authData?.session) {
+      apiCache.setUser(user)
+      return { token: authData.session.access_token, user }
+    }
+
+    // 如果 Supabase Auth 登录失败，但 password_hash 验证通过，仍然允许登录
+    // 这种情况发生在管理员修改密码但 Supabase Auth 密码未同步时
+    console.warn('Supabase Auth登录失败，使用自定义认证:', authError?.message)
     
-    return { token: authData.session.access_token, user }
+    // 创建一个临时token（基于用户ID生成）
+    const tempToken = btoa(JSON.stringify({ 
+      userId: profile.id, 
+      expires: Date.now() + 86400000 
+    }))
+    
+    apiCache.setUser(user)
+    return { token: tempToken, user }
   },
 
   // 登出
@@ -180,7 +274,7 @@ export const api = {
     }
 
     // 创建 Auth 用户（使用 signUp）
-    const { data, error } = await supabase.auth.signUp({
+    const { data: authData, error: authError } = await supabase.auth.signUp({
       email: `${username}@test.com`,
       password: password,
       options: {
@@ -193,9 +287,25 @@ export const api = {
       }
     })
 
-    if (error) throw error
+    if (authError) throw authError
+    if (!authData.user) throw new Error('用户创建失败')
 
-    return { id: data.user.id }
+    // 创建 profile（包含password_hash）
+    const { error: profileError } = await supabase
+      .from('profiles')
+      .upsert({
+        id: authData.user.id,
+        username: username,
+        name: userData.name,
+        role: userData.role,
+        department: userData.department,
+        permissions: userData.permissions || { viewSelf: true, viewPeer: false, viewLeader: false, viewSummary: false },
+        password_hash: hashPassword(password)
+      })
+
+    if (profileError) throw profileError
+
+    return { id: authData.user.id }
   },
 
   // 获取用户列表（带缓存）
@@ -274,7 +384,8 @@ export const api = {
         name: userData.name,
         role: userData.role,
         department: userData.department,
-        permissions: userData.permissions || { viewSelf: true, viewPeer: false, viewLeader: false, viewSummary: false }
+        permissions: userData.permissions || { viewSelf: true, viewPeer: false, viewLeader: false, viewSummary: false },
+        password_hash: hashPassword(userData.password)
       })
 
     if (profileError) throw profileError
@@ -286,7 +397,7 @@ export const api = {
   async updateUser(id, userData) {
     await requireAuth()
     const session = await getLocalUser()
-    
+
     // 权限检查
     if (session.user.role !== 'admin' && id !== session.user.id) {
       throw new Error('权限不足')
@@ -303,8 +414,41 @@ export const api = {
       updateData.role = userData.role
     }
 
-    // 密码更新需要通过 Supabase 控制台或邮箱重置
-    // 前端 anon key 无法修改密码
+    // 处理密码更新
+    if (userData.password) {
+      updateData.password_hash = hashPassword(userData.password)
+      
+      // 检查是否是临时token（base64编码的JSON）
+      const isTempToken = session.token.length < 200 && session.token.indexOf('.') === -1
+      
+      // 只有使用真实Supabase token时才调用边缘函数同步密码
+      if (!isTempToken) {
+        try {
+          const updateResponse = await fetch(`${supabaseUrl}/functions/v1/update-user-password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${session.token}`
+            },
+            body: JSON.stringify({
+              userId: id,
+              newPassword: userData.password
+            })
+          })
+          
+          if (!updateResponse.ok) {
+            const errorData = await updateResponse.json().catch(() => ({}))
+            console.warn('Supabase Auth密码同步失败:', errorData.error || updateResponse.statusText)
+          }
+        } catch (e) {
+          console.warn('调用密码同步函数失败:', e.message)
+        }
+      } else {
+        console.warn('使用临时token，跳过Supabase Auth密码同步')
+      }
+    } else if (userData.password_hash) {
+      updateData.password_hash = userData.password_hash
+    }
 
     const { error } = await supabase
       .from('profiles')
@@ -2806,7 +2950,8 @@ export const createUserWithoutLogin = async (username, password, userData) => {
       name: userData.name,
       role: userData.role,
       department: userData.department,
-      permissions: JSON.parse(userData.permissions || '{"viewSelf":true,"viewPeer":false,"viewLeader":false,"viewSummary":false}')
+      permissions: JSON.parse(userData.permissions || '{"viewSelf":true,"viewPeer":false,"viewLeader":false,"viewSummary":false}'),
+      password_hash: hashPassword(password)
     })
 
   if (profileError) {
