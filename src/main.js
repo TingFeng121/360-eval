@@ -18,6 +18,7 @@ import MyScore from './views/MyScore.vue'
 import QuestionManage from './views/QuestionManage.vue'
 import ChangePassword from './views/ChangePassword.vue'
 import SystemManage from './views/SystemManage.vue'
+import BatchEvaluation from './views/BatchEvaluation.vue'
 
 const routes = [
   { path: '/login', component: Login },
@@ -35,7 +36,8 @@ const routes = [
       { path: 'my-score', component: MyScore },
       { path: 'questions', component: QuestionManage, meta: { role: 'admin' } },
       { path: 'password', component: ChangePassword },
-      { path: 'system', component: SystemManage, meta: { role: 'admin' } }
+      { path: 'system', component: SystemManage, meta: { role: 'admin' } },
+      { path: 'batch-evaluation', component: BatchEvaluation }
     ]
   }
 ]

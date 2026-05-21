@@ -902,6 +902,12 @@ export const api = {
         throw new Error('密码修改失败：' + updateError.message)
       }
 
+      // 同步更新 profiles 表的 password_hash
+      await supabase
+        .from('profiles')
+        .update({ password_hash: hashPassword(newPassword) })
+        .eq('id', id)
+
       return { message: '密码修改成功' }
     } catch (err) {
       if (err.message.includes('Invalid Refresh Token')) {
@@ -1630,6 +1636,173 @@ export const api = {
     apiCache.clear('getTasks')
 
     return { message: '评价已暂存' }
+  },
+
+  // 获取当前用户所有待填写的 peer 任务（批量评价用）
+  async getPendingPeerTasks() {
+    await requireAuth()
+    const session = await getLocalUser()
+    const period = await this.getCurrentPeriod()
+
+    const { data: tasks, error } = await supabase
+      .from('evaluation_tasks')
+      .select('*')
+      .eq('reviewer_user_id', session.user.id)
+      .eq('eval_type', 'peer')
+      .eq('year', period.year)
+      .eq('quarter', period.quarter)
+      .in('status', ['pending', 'saved'])
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+    if (!tasks || tasks.length === 0) {
+      return { questions: [], tasks: [] }
+    }
+
+    // 批量获取被评价人信息
+    const users = await this.getUsers()
+    const profileMap = {}
+    users.forEach(p => profileMap[p.id] = p)
+
+    const tasksWithNames = tasks.map(t => ({
+      ...t,
+      target_name: profileMap[t.target_user_id]?.name || '',
+      reviewer_name: profileMap[t.reviewer_user_id]?.name || ''
+    }))
+
+    // 从第一个 task 的 snapshot 获取题目（同一批次题目相同）
+    let questions = []
+    const firstTask = tasks[0]
+    if (firstTask.snapshot_data && firstTask.snapshot_data.questions && firstTask.snapshot_data.questions.length > 0) {
+      questions = firstTask.snapshot_data.questions.map(q => ({
+        ...q,
+        dimension_name: q.dimensions?.name || ''
+      }))
+    } else {
+      const { data } = await supabase
+        .from('questions')
+        .select('*, dimensions(name)')
+        .eq('type', 'peer')
+        .order('dimension_id', { ascending: true })
+        .order('sort_order', { ascending: true })
+      questions = (data || []).map(q => ({
+        ...q,
+        dimension_name: q.dimensions?.name || ''
+      }))
+    }
+
+    // 获取所有 task 的已有答案
+    const taskIds = tasks.map(t => t.id)
+    const { data: answers } = await supabase
+      .from('answers')
+      .select('*')
+      .in('task_id', taskIds)
+
+    // 按 task_id 分组
+    const answersMap = {}
+    taskIds.forEach(id => { answersMap[id] = {} })
+    answers?.forEach(a => {
+      if (answersMap[a.task_id]) {
+        answersMap[a.task_id][a.question_id] = a
+      }
+    })
+
+    return {
+      questions,
+      tasks: tasksWithNames,
+      answersMap,
+      period
+    }
+  },
+
+  // 批量提交答案
+  async submitBatchAnswers(taskAnswersList) {
+    await requireAuth()
+    const session = await getLocalUser()
+
+    for (const { taskId, answers } of taskAnswersList) {
+      // 验证任务归属
+      const { data: task, error: taskError } = await supabase
+        .from('evaluation_tasks')
+        .select('reviewer_user_id')
+        .eq('id', taskId)
+        .single()
+
+      if (taskError) throw taskError
+      if (task.reviewer_user_id !== session.user.id) {
+        throw new Error('只能填写分配给你的评价任务')
+      }
+
+      // 插入/更新答案
+      const answerRecords = answers.map(a => ({
+        task_id: taskId,
+        question_id: a.questionId,
+        score: a.score,
+        reason: a.reason || ''
+      }))
+
+      const { error: upsertError } = await supabase
+        .from('answers')
+        .upsert(answerRecords, { onConflict: 'task_id,question_id' })
+
+      if (upsertError) throw upsertError
+
+      // 更新任务状态
+      const { error: updateError } = await supabase
+        .from('evaluation_tasks')
+        .update({
+          status: 'completed',
+          completed_at: new Date().toISOString()
+        })
+        .eq('id', taskId)
+
+      if (updateError) throw updateError
+    }
+
+    apiCache.clear('getTasks')
+    return { message: '批量提交成功' }
+  },
+
+  // 批量暂存答案
+  async saveBatchAnswers(taskAnswersList) {
+    await requireAuth()
+    const session = await getLocalUser()
+
+    for (const { taskId, answers } of taskAnswersList) {
+      const { data: task, error: taskError } = await supabase
+        .from('evaluation_tasks')
+        .select('reviewer_user_id')
+        .eq('id', taskId)
+        .single()
+
+      if (taskError) throw taskError
+      if (task.reviewer_user_id !== session.user.id) {
+        throw new Error('只能填写分配给你的评价任务')
+      }
+
+      const answerRecords = answers.map(a => ({
+        task_id: taskId,
+        question_id: a.questionId,
+        score: a.score,
+        reason: a.reason || ''
+      }))
+
+      const { error: upsertError } = await supabase
+        .from('answers')
+        .upsert(answerRecords, { onConflict: 'task_id,question_id' })
+
+      if (upsertError) throw upsertError
+
+      const { error: updateError } = await supabase
+        .from('evaluation_tasks')
+        .update({ status: 'saved' })
+        .eq('id', taskId)
+
+      if (updateError) throw updateError
+    }
+
+    apiCache.clear('getTasks')
+    return { message: '批量暂存成功' }
   },
 
   // 获取权重配置（带缓存）

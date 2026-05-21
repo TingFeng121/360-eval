@@ -470,9 +470,10 @@ onMounted(async () => {
   isMobile.value = window.innerWidth <= 768
   window.addEventListener('resize', handleResize)
 
+  const p = await api.getCurrentPeriod()
+  currentPeriod.value = p
+
   if (currentUser.value.role === 'admin') {
-    const p = await api.getCurrentPeriod()
-    currentPeriod.value = p
     await loadStats()
     await loadEmployeeAndLeaderList()
   }

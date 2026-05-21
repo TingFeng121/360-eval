@@ -9,8 +9,12 @@
           </el-select>
         </div>
       </div>
-      <div class="toolbar-right" v-if="currentUser.role === 'admin'">
-        <el-button type="primary" @click="showCreateModal = true" class="btn-primary">
+      <div class="toolbar-right">
+        <el-button v-if="hasPendingPeerTasks" @click="router.push('/batch-evaluation')" class="btn-batch">
+          <el-icon><Edit /></el-icon>
+          批量互评
+        </el-button>
+        <el-button v-if="currentUser.role === 'admin'" type="primary" @click="showCreateModal = true" class="btn-primary">
           <el-icon><Plus /></el-icon>
           新建任务
         </el-button>
@@ -178,12 +182,7 @@
         :leader-list="leaderList"
         :role-tag-type="roleTagType"
         :role-name="roleName"
-        :get-available-targets="getAvailableTargets"
-        :get-available-reviewers="getAvailableReviewers"
         @change-eval-type="handleEvalTypeChange"
-        @add-peer-group="addPeerGroup"
-        @remove-peer-group="removePeerGroup"
-        @validate-peer-group="validatePeerGroup"
       />
       <template #footer>
         <DialogFooter
@@ -207,12 +206,7 @@
         :leader-list="leaderList"
         :role-tag-type="roleTagType"
         :role-name="roleName"
-        :get-available-targets="getAvailableTargets"
-        :get-available-reviewers="getAvailableReviewers"
         @change-eval-type="handleEvalTypeChange"
-        @add-peer-group="addPeerGroup"
-        @remove-peer-group="removePeerGroup"
-        @validate-peer-group="validatePeerGroup"
       />
       <template #footer>
         <DialogFooter
@@ -230,8 +224,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import {
-  Plus, WarningFilled, DocumentDelete, User, View, Edit,
-  InfoFilled, Check, Close
+  Plus, WarningFilled, View, Edit, Close
 } from '@element-plus/icons-vue'
 import BottomSheet from '@/components/BottomSheet.vue'
 import DialogContent from '@/components/DialogContent.vue'
@@ -250,14 +243,14 @@ const globalError = ref(null)
 const currentPeriod = ref({ year: 2026, quarter: 1 })
 const currentUser = ref({})
 const isMobile = ref(false)
-let peerGroupKey = 0
 
 watch(showCreateModal, (newVal) => {
   if (newVal) {
     filterTargetId.value = ''
     taskForm.eval_type = 'self'
     taskForm.self.target_ids = []
-    taskForm.peer.groups = [{ key: Date.now(), target_id: '', reviewer_ids: [] }]
+    taskForm.peer.reviewer_id = ''
+    taskForm.peer.target_ids = []
     taskForm.leader.reviewer_id = ''
     taskForm.leader.target_ids = []
   }
@@ -298,13 +291,22 @@ const filteredTasks = computed(() => {
   return result
 })
 
+const hasPendingPeerTasks = computed(() => {
+  return tasks.value.some(t =>
+    t.eval_type === 'peer' &&
+    t.reviewer_user_id === currentUser.value.id &&
+    (t.status === 'pending' || t.status === 'saved')
+  )
+})
+
 const taskForm = reactive({
   eval_type: 'self',
   self: {
     target_ids: []
   },
   peer: {
-    groups: [{ key: ++peerGroupKey, target_id: '', reviewer_ids: [] }]
+    reviewer_id: '',
+    target_ids: []
   },
   leader: {
     reviewer_id: '',
@@ -316,38 +318,11 @@ const employeeList = computed(() => userList.value.filter(u => u.role === 'emplo
 
 const leaderList = computed(() => userList.value.filter(u => u.role === 'leader'))
 
-const getAvailableTargets = (currentGroup) => {
-  const selectedInOtherGroups = taskForm.peer.groups
-    .filter(g => g !== currentGroup && g.target_id)
-    .map(g => g.target_id)
-  return employeeList.value.filter(u =>
-    !selectedInOtherGroups.includes(u.id) &&
-    u.id !== currentUser.value.id
-  )
-}
-
-const getAvailableReviewers = (currentGroup) => {
-  const currentTargetId = currentGroup.target_id
-  if (!currentTargetId) return employeeList.value
-
-  const currentYear = currentPeriod.value.year
-  const currentQuarter = currentPeriod.value.quarter
-
-  const reviewersWithExistingTask = tasks.value
-    .filter(t => t.eval_type === 'peer' && t.year === currentYear && t.quarter === currentQuarter && t.target_user_id === currentTargetId)
-    .map(t => t.reviewer_user_id)
-
-  return employeeList.value.filter(u =>
-    u.id !== currentTargetId &&
-    !reviewersWithExistingTask.includes(u.id)
-  )
-}
-
 const isFormValid = computed(() => {
   if (taskForm.eval_type === 'self') {
     return taskForm.self.target_ids.length > 0
   } else if (taskForm.eval_type === 'peer') {
-    return taskForm.peer.groups.some(g => g.target_id && g.reviewer_ids.length > 0)
+    return !!taskForm.peer.reviewer_id && taskForm.peer.target_ids.length > 0
   } else if (taskForm.eval_type === 'leader') {
     return !!taskForm.leader.reviewer_id && taskForm.leader.target_ids.length > 0
   }
@@ -356,26 +331,10 @@ const isFormValid = computed(() => {
 
 const handleEvalTypeChange = () => {
   taskForm.self.target_ids = []
-  taskForm.peer.groups = [{ key: Date.now(), target_id: '', reviewer_ids: [] }]
+  taskForm.peer.reviewer_id = ''
+  taskForm.peer.target_ids = []
   taskForm.leader.reviewer_id = ''
   taskForm.leader.target_ids = []
-}
-
-const addPeerGroup = () => {
-  taskForm.peer.groups.push({ key: Date.now(), target_id: '', reviewer_ids: [] })
-}
-
-const removePeerGroup = (index) => {
-  taskForm.peer.groups.splice(index, 1)
-}
-
-const validatePeerGroup = (currentGroup) => {
-  const selectedTargets = taskForm.peer.groups.map(g => g.target_id).filter(id => id)
-  const uniqueTargets = [...new Set(selectedTargets)]
-  if (selectedTargets.length !== uniqueTargets.length) {
-    ElMessage.warning('每个被评价人只能选择一个')
-    currentGroup.target_id = ''
-  }
 }
 
 const evalTypeName = (type) => {
@@ -445,10 +404,8 @@ const handleCreateTask = async () => {
         await api.createTask(targetId, 'self', [targetId])
       }
     } else if (taskForm.eval_type === 'peer') {
-      for (const group of taskForm.peer.groups) {
-        if (group.target_id && group.reviewer_ids.length > 0) {
-          await api.createTask(group.target_id, 'peer', group.reviewer_ids)
-        }
+      for (const targetId of taskForm.peer.target_ids) {
+        await api.createTask(targetId, 'peer', [taskForm.peer.reviewer_id])
       }
     } else if (taskForm.eval_type === 'leader') {
       for (const targetId of taskForm.leader.target_ids) {
@@ -461,7 +418,8 @@ const handleCreateTask = async () => {
     filterStatus.value = ''
     taskForm.eval_type = 'self'
     taskForm.self.target_ids = []
-    taskForm.peer.groups = [{ key: Date.now(), target_id: '', reviewer_ids: [] }]
+    taskForm.peer.reviewer_id = ''
+    taskForm.peer.target_ids = []
     taskForm.leader.reviewer_id = ''
     taskForm.leader.target_ids = []
     apiCache.clear('getTasks')
@@ -588,6 +546,19 @@ onMounted(async () => {
   border-radius: var(--radius-sm);
   height: 36px;
   font-weight: 500;
+}
+
+.btn-batch {
+  background: #fff !important;
+  border: 1px solid #409eff !important;
+  color: #409eff !important;
+  border-radius: var(--radius-sm);
+  height: 36px;
+  font-weight: 500;
+}
+
+.btn-batch:hover {
+  background: #ecf5ff !important;
 }
 
 .btn-primary:hover {
