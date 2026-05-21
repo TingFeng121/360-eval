@@ -24,6 +24,33 @@
 
     <div class="main-content">
       <div class="left-panel">
+        <!-- 题库选择 -->
+        <div class="bank-section">
+          <div class="bank-header">
+            <span class="bank-label">题库</span>
+            <div class="bank-actions">
+              <el-button size="small" link @click="handleAddBank">
+                <el-icon><Plus /></el-icon>
+              </el-button>
+              <el-button v-if="selectedBank" size="small" link @click="handleEditBank(selectedBank)">
+                <el-icon><Edit /></el-icon>
+              </el-button>
+              <el-button v-if="selectedBank" size="small" link @click="handleDeleteBank(selectedBank)" class="btn-delete-icon">
+                <el-icon><Delete /></el-icon>
+              </el-button>
+            </div>
+          </div>
+          <el-select v-model="selectedBankId" placeholder="选择题库" class="bank-select" @change="handleBankChange">
+            <el-option label="全部题库" value="" />
+            <el-option
+              v-for="bank in questionBanks"
+              :key="bank.id"
+              :label="bank.name"
+              :value="bank.id"
+            />
+          </el-select>
+        </div>
+
         <div class="panel-header">
           <span>能力维度</span>
           <el-button size="small" type="primary" @click="handleAddDimension">
@@ -236,6 +263,32 @@
         <el-button type="primary" @click="handleSaveNewQuestion">保存</el-button>
       </template>
     </el-dialog>
+
+    <!-- 题库编辑对话框 -->
+    <el-dialog
+      v-model="bankDialogVisible"
+      :title="isEditingBank ? '编辑题库' : '新增题库'"
+      width="400px"
+      destroy-on-close
+    >
+      <el-form :model="bankForm" label-position="top">
+        <el-form-item label="题库名称" required>
+          <el-input v-model="bankForm.name" placeholder="请输入题库名称" />
+        </el-form-item>
+        <el-form-item label="题库说明">
+          <el-input
+            v-model="bankForm.description"
+            type="textarea"
+            :rows="2"
+            placeholder="请输入题库说明（可选）"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="bankDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveBank">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -255,6 +308,14 @@ const selectedDimension = ref(null)
 const selectedType = ref('self')
 const currentUser = ref({})
 const isGuest = computed(() => currentUser.value?.role === 'guest')
+
+// 题库相关
+const questionBanks = ref([])
+const selectedBankId = ref('')
+const selectedBank = computed(() => questionBanks.value.find(b => b.id === selectedBankId.value) || null)
+const bankDialogVisible = ref(false)
+const isEditingBank = ref(false)
+const bankForm = reactive({ id: null, name: '', description: '' })
 
 const questionTypes = [
   { label: '自评', value: 'self' },
@@ -408,7 +469,8 @@ const handleSaveNewQuestion = async () => {
       dimension_id: selectedDimension.value.id,
       sort_order: existingQuestions.length,
       type: questionForm.type,
-      scoring_criteria: ''
+      scoring_criteria: '',
+      bank_id: selectedBankId.value || null
     })
     questions.value.push(newQ)
     questionDialogVisible.value = false
@@ -645,7 +707,8 @@ const handleImportFile = async (file) => {
             dimension_id: dim.id,
             sort_order: q.sort_order,
             type: q.type,
-            scoring_criteria: q.scoring_criteria
+            scoring_criteria: q.scoring_criteria,
+            bank_id: selectedBankId.value || null
           })
           questionCount++
         } catch (err) {
@@ -691,11 +754,13 @@ const parseCSVLine = (line) => {
 const loadData = async () => {
   loading.value = true
   try {
-    const [dims, qs] = await Promise.all([
+    const [dims, qs, banks] = await Promise.all([
       api.getDimensions(),
-      api.getQuestions()
+      api.getQuestions(null, selectedBankId.value || null),
+      api.getQuestionBanks()
     ])
     dimensions.value = dims || []
+    questionBanks.value = banks || []
     questions.value = (qs || []).map(q => ({
       ...q,
       scoring_criteria: q.scoring_criteria || '',
@@ -709,6 +774,72 @@ const loadData = async () => {
     ElMessage.error('加载失败：' + err.message)
   } finally {
     loading.value = false
+  }
+}
+
+const handleBankChange = async () => {
+  loading.value = true
+  try {
+    const qs = await api.getQuestions(null, selectedBankId.value || null)
+    questions.value = (qs || []).map(q => ({
+      ...q,
+      scoring_criteria: q.scoring_criteria || '',
+      showScoringPopover: false,
+      scoringExpanded: false
+    }))
+  } catch (err) {
+    ElMessage.error('加载失败：' + err.message)
+  } finally {
+    loading.value = false
+  }
+}
+
+const handleAddBank = () => {
+  isEditingBank.value = false
+  Object.assign(bankForm, { id: null, name: '', description: '' })
+  bankDialogVisible.value = true
+}
+
+const handleEditBank = (bank) => {
+  isEditingBank.value = true
+  Object.assign(bankForm, { id: bank.id, name: bank.name, description: bank.description || '' })
+  bankDialogVisible.value = true
+}
+
+const handleSaveBank = async () => {
+  if (isGuest.value) return ElMessage.warning('访客无权操作')
+  if (!bankForm.name) return ElMessage.warning('请输入题库名称')
+  try {
+    if (isEditingBank.value) {
+      await api.updateQuestionBank(bankForm.id, { name: bankForm.name, description: bankForm.description })
+      const bank = questionBanks.value.find(b => b.id === bankForm.id)
+      if (bank) {
+        bank.name = bankForm.name
+        bank.description = bankForm.description
+      }
+      ElMessage.success('题库已更新')
+    } else {
+      const newBank = await api.createQuestionBank({ name: bankForm.name, description: bankForm.description })
+      questionBanks.value.push(newBank)
+      selectedBankId.value = newBank.id
+      ElMessage.success('题库已创建')
+    }
+    bankDialogVisible.value = false
+  } catch (err) {
+    ElMessage.error(err.message)
+  }
+}
+
+const handleDeleteBank = async (bank) => {
+  if (isGuest.value) return ElMessage.warning('访客无权操作')
+  try {
+    await ElMessageBox.confirm(`确定删除题库"${bank.name}"吗？`, '确认删除', { type: 'warning' })
+    await api.deleteQuestionBank(bank.id)
+    questionBanks.value = questionBanks.value.filter(b => b.id !== bank.id)
+    if (selectedBankId.value === bank.id) selectedBankId.value = ''
+    ElMessage.success('题库已删除')
+  } catch (err) {
+    if (err !== 'cancel') ElMessage.error(err.message)
   }
 }
 
@@ -889,6 +1020,43 @@ onMounted(async () => {
 
 .type-tab.active .type-count {
   background: rgba(255, 255, 255, 0.2);
+}
+
+.bank-section {
+  padding: 12px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.bank-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.bank-label {
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.bank-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.bank-select {
+  width: 100%;
+}
+
+.bank-select :deep(.el-input__wrapper) {
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  box-shadow: none !important;
+  height: 34px;
 }
 
 .dimension-list {

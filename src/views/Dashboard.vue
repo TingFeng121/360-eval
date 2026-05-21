@@ -227,14 +227,10 @@
         :task-form="taskForm"
         :employee-list="employeeList"
         :leader-list="leaderList"
+        :question-banks="questionBanks"
         :role-tag-type="roleTagType"
         :role-name="roleName"
-        :get-available-targets="getAvailableTargets"
-        :get-available-reviewers="getAvailableReviewers"
         @change-eval-type="handleEvalTypeChange"
-        @add-peer-group="addPeerGroup"
-        @remove-peer-group="removePeerGroup"
-        @validate-peer-group="validatePeerGroup"
       />
       <template #footer>
         <DialogFooter
@@ -256,14 +252,10 @@
         :task-form="taskForm"
         :employee-list="employeeList"
         :leader-list="leaderList"
+        :question-banks="questionBanks"
         :role-tag-type="roleTagType"
         :role-name="roleName"
-        :get-available-targets="getAvailableTargets"
-        :get-available-reviewers="getAvailableReviewers"
         @change-eval-type="handleEvalTypeChange"
-        @add-peer-group="addPeerGroup"
-        @remove-peer-group="removePeerGroup"
-        @validate-peer-group="validatePeerGroup"
       />
       <template #footer>
         <DialogFooter
@@ -283,7 +275,7 @@ import { ElMessage } from 'element-plus'
 import {
   Tools, Plus, UserFilled, DataLine, Download,
   User, Document, CircleCheck, Clock, Bell, Edit, SwitchButton,
-  InfoFilled, Close
+  Close
 } from '@element-plus/icons-vue'
 import { supabase, api, getCurrentUser, apiCache } from '../supabase'
 import BottomSheet from '@/components/BottomSheet.vue'
@@ -318,13 +310,14 @@ const isMobile = ref(false)
 const showCreateModal = ref(false)
 const taskForm = reactive({
   eval_type: 'self',
+  bank_id: '',
   self: { target_ids: [] },
-  peer: { groups: [{ key: 0, target_id: null, reviewer_ids: [] }] },
-  leader: { reviewer_id: null, target_ids: [] }
+  peer: { reviewer_id: '', target_ids: [] },
+  leader: { reviewer_id: '', target_ids: [] }
 })
-let peerGroupKey = 0
 const employeeList = ref([])
 const leaderList = ref([])
+const questionBanks = ref([])
 
 
 const circumference = 2 * Math.PI * 42
@@ -504,10 +497,10 @@ const isFormValid = computed(() => {
     return taskForm.self.target_ids.length > 0
   }
   if (taskForm.eval_type === 'peer') {
-    return taskForm.peer.groups.every(g => g.target_id && g.reviewer_ids.length > 0)
+    return !!taskForm.peer.reviewer_id && taskForm.peer.target_ids.length > 0
   }
   if (taskForm.eval_type === 'leader') {
-    return taskForm.leader.reviewer_id && taskForm.leader.target_ids.length > 0
+    return !!taskForm.leader.reviewer_id && taskForm.leader.target_ids.length > 0
   }
   return false
 })
@@ -522,91 +515,35 @@ const roleName = (role) => {
   return map[role] || role
 }
 
-const getAvailableTargets = (currentGroup) => {
-  const selectedInOtherGroups = taskForm.peer.groups
-    .filter(g => g !== currentGroup && g.target_id)
-    .map(g => g.target_id)
-
-  return employeeList.value.filter(u =>
-    !selectedInOtherGroups.includes(u.id) &&
-    u.id !== currentUser.value.id
-  )
-}
-
-const getAvailableReviewers = (currentGroup) => {
-  const currentTargetId = currentGroup.target_id
-  if (!currentTargetId) return employeeList.value
-
-  return employeeList.value.filter(u =>
-    u.id !== currentTargetId
-  )
-}
-
 const handleEvalTypeChange = () => {
   taskForm.self.target_ids = []
-  taskForm.peer.groups = [{ key: Date.now(), target_id: null, reviewer_ids: [] }]
-  taskForm.leader.reviewer_id = null
+  taskForm.peer.reviewer_id = ''
+  taskForm.peer.target_ids = []
+  taskForm.leader.reviewer_id = ''
   taskForm.leader.target_ids = []
-}
-
-const addPeerGroup = () => {
-  taskForm.peer.groups.push({ key: Date.now(), target_id: null, reviewer_ids: [] })
-}
-
-const removePeerGroup = (index) => {
-  taskForm.peer.groups.splice(index, 1)
-}
-
-const validatePeerGroup = (group) => {
 }
 
 const handleCreateTask = async () => {
   try {
-    const period = currentPeriod.value
-    const tasksToCreate = []
-
+    const bankId = taskForm.bank_id || null
     if (taskForm.eval_type === 'self') {
       for (const targetId of taskForm.self.target_ids) {
-        tasksToCreate.push({
-          period_year: period.year,
-          period_quarter: period.quarter,
-          target_user_id: targetId,
-          reviewer_user_id: targetId,
-          eval_type: 'self',
-          status: 'pending'
-        })
+        await api.createTask(targetId, 'self', [targetId], bankId)
       }
     } else if (taskForm.eval_type === 'peer') {
-      for (const group of taskForm.peer.groups) {
-        for (const reviewerId of group.reviewer_ids) {
-          tasksToCreate.push({
-            period_year: period.year,
-            period_quarter: period.quarter,
-            target_user_id: group.target_id,
-            reviewer_user_id: reviewerId,
-            eval_type: 'peer',
-            status: 'pending'
-          })
-        }
+      for (const targetId of taskForm.peer.target_ids) {
+        await api.createTask(targetId, 'peer', [taskForm.peer.reviewer_id], bankId)
       }
     } else if (taskForm.eval_type === 'leader') {
       for (const targetId of taskForm.leader.target_ids) {
-        tasksToCreate.push({
-          period_year: period.year,
-          period_quarter: period.quarter,
-          target_user_id: targetId,
-          reviewer_user_id: taskForm.leader.reviewer_id,
-          eval_type: 'leader',
-          status: 'pending'
-        })
+        await api.createTask(targetId, 'leader', [taskForm.leader.reviewer_id], bankId)
       }
     }
 
-    for (const task of tasksToCreate) {
-      await api.createTask(task)
-    }
-
-    ElMessage.success(`成功创建 ${tasksToCreate.length} 个任务`)
+    const count = taskForm.eval_type === 'self' ? taskForm.self.target_ids.length
+      : taskForm.eval_type === 'peer' ? taskForm.peer.target_ids.length
+      : taskForm.leader.target_ids.length
+    ElMessage.success(`成功创建 ${count} 个任务`)
     showCreateModal.value = false
     apiCache.clear('getTasks')
     await loadStats()
@@ -618,9 +555,11 @@ const handleCreateTask = async () => {
 watch(showCreateModal, (newVal) => {
   if (newVal) {
     taskForm.eval_type = 'self'
+    taskForm.bank_id = ''
     taskForm.self.target_ids = []
-    taskForm.peer.groups = [{ key: Date.now(), target_id: null, reviewer_ids: [] }]
-    taskForm.leader.reviewer_id = null
+    taskForm.peer.reviewer_id = ''
+    taskForm.peer.target_ids = []
+    taskForm.leader.reviewer_id = ''
     taskForm.leader.target_ids = []
   }
 })
@@ -630,6 +569,7 @@ const openCreateModal = async () => {
     const users = await api.getUsers()
     employeeList.value = users.filter(u => u.role === 'employee' || u.role === 'leader')
     leaderList.value = users.filter(u => u.role === 'leader' || u.role === 'admin')
+    questionBanks.value = await api.getQuestionBanks()
   } catch (err) {
     console.error('加载数据失败:', err)
   }

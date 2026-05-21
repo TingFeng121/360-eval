@@ -28,6 +28,18 @@
       </el-select>
     </el-form-item>
 
+    <el-form-item label="使用题库">
+      <el-select v-model="taskForm.bank_id" placeholder="选择题库" clearable class="full-select">
+        <el-option label="默认题库" value="" />
+        <el-option
+          v-for="bank in questionBanks"
+          :key="bank.id"
+          :label="bank.name"
+          :value="bank.id"
+        />
+      </el-select>
+    </el-form-item>
+
     <transition name="fade-slide">
       <div v-if="taskForm.eval_type === 'self'" class="form-section">
         <div class="section-hint">
@@ -116,6 +128,7 @@ const props = defineProps({
   taskForm: Object,
   employeeList: Array,
   leaderList: Array,
+  questionBanks: { type: Array, default: () => [] },
   roleTagType: Function,
   roleName: Function
 })

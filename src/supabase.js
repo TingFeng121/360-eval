@@ -606,6 +606,83 @@ export const api = {
     return { message: '题目删除成功' }
   },
 
+  // ========== 题库管理 ==========
+
+  // 获取所有题库
+  async getQuestionBanks() {
+    const cached = apiCache.get('getQuestionBanks')
+    if (cached) return cached
+
+    const { data, error } = await supabase
+      .from('question_banks')
+      .select('*')
+      .order('created_at', { ascending: true })
+
+    if (error) throw error
+
+    apiCache.set('getQuestionBanks', {}, data || [])
+    return data || []
+  },
+
+  // 创建题库
+  async createQuestionBank(bank) {
+    await requireAuth()
+    const session = await getLocalUser()
+    if (session.user.role !== 'admin') throw new Error('权限不足')
+
+    const { data, error } = await supabase
+      .from('question_banks')
+      .insert([bank])
+      .select()
+      .single()
+
+    if (error) throw error
+    apiCache.clear('getQuestionBanks')
+    return data
+  },
+
+  // 更新题库
+  async updateQuestionBank(id, updates) {
+    await requireAuth()
+    const session = await getLocalUser()
+    if (session.user.role !== 'admin') throw new Error('权限不足')
+
+    const { error } = await supabase
+      .from('question_banks')
+      .update(updates)
+      .eq('id', id)
+
+    if (error) throw error
+    apiCache.clear('getQuestionBanks')
+    return { message: '题库更新成功' }
+  },
+
+  // 删除题库
+  async deleteQuestionBank(id) {
+    await requireAuth()
+    const session = await getLocalUser()
+    if (session.user.role !== 'admin') throw new Error('权限不足')
+
+    // 检查是否有题目关联
+    const { count } = await supabase
+      .from('questions')
+      .select('*', { count: 'exact', head: true })
+      .eq('bank_id', id)
+
+    if (count > 0) {
+      throw new Error('该题库下还有题目，请先删除或移走题目')
+    }
+
+    const { error } = await supabase
+      .from('question_banks')
+      .delete()
+      .eq('id', id)
+
+    if (error) throw error
+    apiCache.clear('getQuestionBanks')
+    return { message: '题库删除成功' }
+  },
+
   // 清空所有题目（仅管理员）
   async clearAllQuestions() {
     await requireAuth()
@@ -965,12 +1042,12 @@ export const api = {
   },
 
   // 获取题目（带缓存）
-  async getQuestions(type) {
+  async getQuestions(type, bankId) {
     // 检查缓存
-    const cacheKey = type || 'all'
+    const cacheKey = `${type || 'all'}_${bankId || 'all'}`
     const cached = apiCache.get('getQuestions', { type: cacheKey })
     if (cached) return cached
-    
+
     let query = supabase
       .from('questions')
       .select('*, dimensions(name)')
@@ -979,6 +1056,9 @@ export const api = {
 
     if (type) {
       query = query.eq('type', type)
+    }
+    if (bankId) {
+      query = query.eq('bank_id', bankId)
     }
 
     const { data, error } = await query
@@ -989,10 +1069,10 @@ export const api = {
       ...q,
       dimension_name: q.dimensions?.name || ''
     }))
-    
+
     // 缓存结果
     apiCache.set('getQuestions', { type: cacheKey }, result)
-    
+
     return result
   },
 
@@ -1039,6 +1119,20 @@ export const api = {
       return { user, period, radar: [] }
     }
 
+    // 如果任务关联了题库，用题库的维度
+    const taskBankId = tasks[0]?.bank_id || tasks[0]?.snapshot_data?.bank_id
+    let activeDimensions = dimensions
+    if (taskBankId) {
+      const { data: bankQuestions } = await supabase
+        .from('questions')
+        .select('dimension_id')
+        .eq('bank_id', taskBankId)
+      const bankDimIds = [...new Set((bankQuestions || []).map(q => q.dimension_id))]
+      if (bankDimIds.length > 0) {
+        activeDimensions = dimensions.filter(d => bankDimIds.includes(d.id))
+      }
+    }
+
     // 获取所有任务ID
     const allTaskIds = tasks.map(t => t.id)
     
@@ -1053,10 +1147,14 @@ export const api = {
     }
 
     // 获取所有题目（按维度和类型分组）
-    const { data: allQuestions } = await supabase
+    let allQuestionsQuery = supabase
       .from('questions')
       .select('id, dimension_id, type')
-    
+    if (taskBankId) {
+      allQuestionsQuery = allQuestionsQuery.eq('bank_id', taskBankId)
+    }
+    const { data: allQuestions } = await allQuestionsQuery
+
     const questionMap = {}
     allQuestions?.forEach(q => {
       const key = `${q.dimension_id}_${q.type}`
@@ -1113,13 +1211,13 @@ export const api = {
     const calcDimensionScores = (evalType) => {
       const typeTasks = taskMap[evalType]
       if (!typeTasks || typeTasks.length === 0) {
-        return dimensions.map(dim => ({ dimension_name: dim.name, score: null }))
+        return activeDimensions.map(dim => ({ dimension_name: dim.name, score: null }))
       }
 
       const taskIds = typeTasks.map(t => t.id)
       const typeAnswers = allAnswers.filter(a => taskIds.includes(a.task_id))
 
-      return dimensions.map(dim => {
+      return activeDimensions.map(dim => {
         const key = `${dim.id}_${evalType}`
         const questionIds = questionMap[key] || []
 
@@ -1424,7 +1522,7 @@ export const api = {
   },
 
   // 创建评价任务
-  async createTask(targetUserId, evalType, reviewerUserIds) {
+  async createTask(targetUserId, evalType, reviewerUserIds, bankId) {
     await requireAuth()
     const session = await getLocalUser()
 
@@ -1451,17 +1549,24 @@ export const api = {
     }
 
     // 获取当前题目并创建快照
-    const { data: currentQuestions } = await supabase
+    let questionQuery = supabase
       .from('questions')
       .select('*, dimensions(name)')
       .eq('type', evalType)
       .order('dimension_id', { ascending: true })
       .order('sort_order', { ascending: true })
 
+    if (bankId) {
+      questionQuery = questionQuery.eq('bank_id', bankId)
+    }
+
+    const { data: currentQuestions } = await questionQuery
+
     const snapshotData = {
       questions: currentQuestions || [],
       createdAt: new Date().toISOString(),
-      period: period
+      period: period,
+      bank_id: bankId || null
     }
 
     const reviewers = evalType === 'self' ? [targetUserId] : reviewerUserIds
@@ -1473,7 +1578,8 @@ export const api = {
       year: period.year,
       quarter: period.quarter,
       status: 'pending',
-      snapshot_data: snapshotData
+      snapshot_data: snapshotData,
+      bank_id: bankId || null
     }))
 
     const { error } = await supabase
@@ -2113,8 +2219,9 @@ export const api = {
   },
 
   // 获取统计结果 (管理员) - 优化版
-  async getSummary() {
-    const cached = apiCache.get('getSummary')
+  async getSummary(bankId) {
+    const cacheKey = bankId || 'all'
+    const cached = apiCache.get('getSummary', { bankId: cacheKey })
     if (cached) return cached
 
     await requireAuth()
@@ -2138,11 +2245,15 @@ export const api = {
 
     // 获取所有用户的任务（批量查询）
     const userIds = users.map(u => u.id)
-    const { data: allTasks } = await supabase
+    let taskQuery = supabase
       .from('evaluation_tasks')
-      .select('id, target_user_id, eval_type, status')
+      .select('id, target_user_id, eval_type, status, bank_id')
       .in('target_user_id', userIds)
       .eq('status', 'completed')
+    if (bankId) {
+      taskQuery = taskQuery.eq('bank_id', bankId)
+    }
+    const { data: allTasks } = await taskQuery
 
     // 获取所有答案（包含question_id用于按维度计算）
     const taskIds = allTasks?.map(t => t.id) || []
@@ -2156,10 +2267,14 @@ export const api = {
     }
 
     // 获取所有题目和维度
-    const { data: allQuestions } = await supabase
+    let questionsQuery = supabase
       .from('questions')
       .select('id, dimension_id, type')
-    
+    if (bankId) {
+      questionsQuery = questionsQuery.eq('bank_id', bankId)
+    }
+    const { data: allQuestions } = await questionsQuery
+
     const { data: dimensions } = await supabase
       .from('dimensions')
       .select('*')
@@ -2302,7 +2417,7 @@ export const api = {
         ...item,
         rank: index + 1
       }))
-    apiCache.set('getSummary', sortedResults)
+    apiCache.set('getSummary', { bankId: cacheKey }, sortedResults)
     return sortedResults
   },
 

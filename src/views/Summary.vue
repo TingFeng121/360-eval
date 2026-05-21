@@ -3,6 +3,10 @@
     <div class="header">
       <h2>数据汇总 - {{ period.year }}年第{{ period.quarter }}季度</h2>
       <div class="header-buttons">
+        <el-select v-model="selectedBankId" placeholder="全部题库" clearable @change="handleBankChange" style="width: 160px">
+          <el-option label="全部题库" value="" />
+          <el-option v-for="bank in questionBanks" :key="bank.id" :label="bank.name" :value="bank.id" />
+        </el-select>
         <el-button @click="exportTable">导出表格</el-button>
         <el-button @click="exportRadarPdf">导出雷达图PDF</el-button>
       </div>
@@ -390,6 +394,8 @@ const aiAnalysisResult = ref(null)
 const aiAnalysisError = ref(null)
 const analyzingAI = ref(false)
 const reportHistory = ref([])
+const questionBanks = ref([])
+const selectedBankId = ref('')
 
 const loadReportHistory = () => {
   try {
@@ -572,7 +578,11 @@ const rightRadarOption = computed(() => {
 })
 
 const loadSummary = async () => {
-  summaryData.value = await api.getSummary()
+  summaryData.value = await api.getSummary(selectedBankId.value || null)
+}
+
+const handleBankChange = () => {
+  loadSummary()
 }
 
 const getRowClassName = ({ row }) => {
@@ -1124,6 +1134,7 @@ onMounted(async () => {
     } else {
       comparePeriod.value = null
     }
+    questionBanks.value = await api.getQuestionBanks()
     await loadSummary()
     await loadUsers()
     if (users.value.length > 0) {

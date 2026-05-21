@@ -180,6 +180,7 @@
         :task-form="taskForm"
         :employee-list="employeeList"
         :leader-list="leaderList"
+        :question-banks="questionBanks"
         :role-tag-type="roleTagType"
         :role-name="roleName"
         @change-eval-type="handleEvalTypeChange"
@@ -204,6 +205,7 @@
         :task-form="taskForm"
         :employee-list="employeeList"
         :leader-list="leaderList"
+        :question-banks="questionBanks"
         :role-tag-type="roleTagType"
         :role-name="roleName"
         @change-eval-type="handleEvalTypeChange"
@@ -243,11 +245,13 @@ const globalError = ref(null)
 const currentPeriod = ref({ year: 2026, quarter: 1 })
 const currentUser = ref({})
 const isMobile = ref(false)
+const questionBanks = ref([])
 
 watch(showCreateModal, (newVal) => {
   if (newVal) {
     filterTargetId.value = ''
     taskForm.eval_type = 'self'
+    taskForm.bank_id = ''
     taskForm.self.target_ids = []
     taskForm.peer.reviewer_id = ''
     taskForm.peer.target_ids = []
@@ -301,6 +305,7 @@ const hasPendingPeerTasks = computed(() => {
 
 const taskForm = reactive({
   eval_type: 'self',
+  bank_id: '',
   self: {
     target_ids: []
   },
@@ -392,6 +397,7 @@ const loadUsers = async () => {
     userList.value = await api.getUsers()
     const period = await api.getCurrentPeriod()
     currentPeriod.value = period
+    questionBanks.value = await api.getQuestionBanks()
   } catch (err) {
     console.error('加载用户失败', err)
   }
@@ -399,17 +405,18 @@ const loadUsers = async () => {
 
 const handleCreateTask = async () => {
   try {
+    const bankId = taskForm.bank_id || null
     if (taskForm.eval_type === 'self') {
       for (const targetId of taskForm.self.target_ids) {
-        await api.createTask(targetId, 'self', [targetId])
+        await api.createTask(targetId, 'self', [targetId], bankId)
       }
     } else if (taskForm.eval_type === 'peer') {
       for (const targetId of taskForm.peer.target_ids) {
-        await api.createTask(targetId, 'peer', [taskForm.peer.reviewer_id])
+        await api.createTask(targetId, 'peer', [taskForm.peer.reviewer_id], bankId)
       }
     } else if (taskForm.eval_type === 'leader') {
       for (const targetId of taskForm.leader.target_ids) {
-        await api.createTask(targetId, 'leader', [taskForm.leader.reviewer_id])
+        await api.createTask(targetId, 'leader', [taskForm.leader.reviewer_id], bankId)
       }
     }
     ElMessage.success('创建成功')
@@ -417,6 +424,7 @@ const handleCreateTask = async () => {
     filterTargetId.value = ''
     filterStatus.value = ''
     taskForm.eval_type = 'self'
+    taskForm.bank_id = ''
     taskForm.self.target_ids = []
     taskForm.peer.reviewer_id = ''
     taskForm.peer.target_ids = []
