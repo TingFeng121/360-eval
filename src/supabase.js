@@ -1499,7 +1499,7 @@ export const api = {
 
     if (taskError) throw taskError
 
-    // 权限检查
+    // 检查权限
     if (session.user.role === 'employee') {
       if (task.target_user_id !== session.user.id && task.reviewer_user_id !== session.user.id) {
         throw new Error('权限不足')
