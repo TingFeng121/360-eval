@@ -21,12 +21,14 @@
 - **题库管理**: 支持多维度题目配置
 - **权重配置**: 自定义各类评价的权重
 - **数据汇总**: 自动计算最终评分
+- **AI智能分析**: 基于GPT自动生成360度评价分析报告，包含评分总览、达标判定、差异分析、优势短板、个性化提升方案、综合评级与任用建议
 
 ### 技术栈
 
 - **前端框架**: Vue.js 3 + Vite
 - **UI 组件**: Element Plus
 - **后端/数据库**: Supabase (PostgreSQL)
+- **AI分析**: OpenAI GPT (通过边缘函数调用)
 - **部署平台**: Cloudflare Pages
 
 ### 本地开发
@@ -90,6 +92,28 @@ npm run build
 # 将 dist 文件夹内容上传到 Cloudflare Pages
 ```
 
+### AI分析功能配置
+
+系统支持基于GPT的智能分析报告生成。配置步骤如下：
+
+1. **获取OpenAI API Key**：从 [OpenAI Platform](https://platform.openai.com/) 获取 API Key
+2. **配置AI参数**：在系统管理页面配置：
+   - API URL（如 `https://api.openai.com/v1` 或兼容的代理地址）
+   - API Key
+   - 模型名称（如 `gpt-4o`）
+   - Temperature（建议 0.7）
+   - 最大Token数（建议 4000）
+3. **测试连接**：使用系统管理页面的"测试AI连接"功能验证配置
+4. **使用分析功能**：在评分汇总页面，点击"AI分析"按钮生成分析报告
+
+#### 边缘函数
+
+密码同步功能使用 Supabase Edge Function 实现：
+
+- 函数名称：`update-user-password`
+- 用途：管理员修改用户密码时，同步更新 Supabase Auth 密码
+- 环境变量：`SUPABASE_URL`、`SUPABASE_SECRET_KEYS`（默认已有）
+
 ### 定时任务（防止 Supabase 暂停）
 
 为了防止 Supabase 免费项目因 7 天无活动被暂停，项目包含一个 GitHub Actions 定时任务。
@@ -138,15 +162,19 @@ npm run build
 ├── src/
 │   ├── api/           # API 调用
 │   ├── components/    # 公共组件
+│   ├── composables/   # 组合式函数
 │   ├── styles/        # 样式文件
+│   ├── utils/         # 工具函数
 │   ├── views/         # 页面组件
 │   ├── App.vue        # 根组件
+│   ├── cache.js       # 缓存管理
 │   ├── main.js        # 入口文件
-│   └── supabase.js    # Supabase 配置
-├── public/            # 静态资源
+│   └── supabase.js    # Supabase 配置及API封装
+├── tests/             # 测试文件
 ├── .env.example       # 环境变量模板
 ├── .gitignore         # Git 忽略配置
 ├── supabase-setup.sql # 数据库初始化脚本
+├── wrangler.toml      # Cloudflare Pages 配置
 └── package.json       # 项目配置
 ```
 
@@ -181,6 +209,13 @@ npm run build
 2. 点击 **去评价** 进入评价页面
 3. 对照题目进行打分
 4. 提交评价
+
+#### 4. AI智能分析
+
+1. 进入 **评分汇总** 页面
+2. 选择要分析的员工
+3. 点击 **AI分析** 按钮
+4. 系统自动生成包含六大维度的分析报告
 
 ### 评分计算规则
 
@@ -279,12 +314,14 @@ A 360-degree employee evaluation management system built with Vue.js + Element P
 - **Question Bank**: Multi-dimensional question configuration
 - **Weight Configuration**: Customize evaluation weights
 - **Data Summary**: Automatic score calculation
+- **AI Analysis**: GPT-powered analysis reports including score overview, standard compliance, difference analysis, strengths & weaknesses, personalized improvement plans, and comprehensive rating with employment suggestions
 
 ### Tech Stack
 
 - **Frontend**: Vue.js 3 + Vite
 - **UI Components**: Element Plus
 - **Backend/Database**: Supabase (PostgreSQL)
+- **AI Analysis**: OpenAI GPT (via Edge Functions)
 - **Deployment**: Cloudflare Pages
 
 ### Local Development
@@ -348,6 +385,28 @@ npm run build
 # Upload dist folder contents to Cloudflare Pages
 ```
 
+### AI Analysis Configuration
+
+The system supports GPT-powered analysis report generation. Configuration steps:
+
+1. **Get OpenAI API Key**: Obtain from [OpenAI Platform](https://platform.openai.com/)
+2. **Configure AI Parameters**: In System Management page:
+   - API URL (e.g., `https://api.openai.com/v1` or compatible proxy)
+   - API Key
+   - Model name (e.g., `gpt-4o`)
+   - Temperature (recommended: 0.7)
+   - Max tokens (recommended: 4000)
+3. **Test Connection**: Use "Test AI Connection" in System Management
+4. **Use Analysis**: On Summary page, click "AI Analysis" to generate report
+
+#### Edge Functions
+
+Password sync is handled by Supabase Edge Function:
+
+- Function name: `update-user-password`
+- Purpose: Sync admin password changes to Supabase Auth
+- Environment: `SUPABASE_URL`, `SUPABASE_SECRET_KEYS` (default provided)
+
 ### Project Structure
 
 ```
@@ -355,14 +414,19 @@ npm run build
 ├── src/
 │   ├── api/           # API calls
 │   ├── components/    # Shared components
+│   ├── composables/   # Composables
 │   ├── styles/        # Style files
+│   ├── utils/         # Utilities
 │   ├── views/         # Page components
 │   ├── App.vue        # Root component
+│   ├── cache.js       # Cache management
 │   ├── main.js        # Entry point
-│   └── supabase.js    # Supabase config
-├── public/            # Static assets
+│   └── supabase.js    # Supabase config and API wrapper
+├── tests/             # Test files
 ├── .env.example       # Environment template
 ├── .gitignore         # Git ignore file
+├── supabase-setup.sql # Database setup script
+├── wrangler.toml      # Cloudflare Pages config
 └── package.json       # Project config
 ```
 
@@ -386,6 +450,13 @@ Default admin account: `admin` / `admin123`
 2. Click **Evaluate** to enter evaluation page
 3. Rate according to questions
 4. Submit evaluation
+
+#### 4. AI Analysis
+
+1. Go to **Summary** page
+2. Select employee to analyze
+3. Click **AI Analysis** button
+4. System generates comprehensive 6-dimension analysis report
 
 ### Scoring Calculation Rules
 

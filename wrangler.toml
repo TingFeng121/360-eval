@@ -1,0 +1,8 @@
+name = "360-eval-system"
+type = "static"
+
+[build]
+command = "npm install && npm run build"
+
+[env]
+NODE_ENV = "production"
