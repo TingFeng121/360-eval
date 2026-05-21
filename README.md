@@ -71,7 +71,7 @@ VITE_SUPABASE_ANON_KEY=your-anon-key
 
 #### 方式一：GitHub 自动部署（推荐）
 
-1. 将代码推送到 GitHub
+1. 将代码推送到  GitHub
 2. 登录 [Cloudflare Dashboard](https://dash.cloudflare.com/)
 3. 进入 **Workers & Pages** → **创建应用程序** → **Pages** → **连接到 Git**
 4. 选择你的 GitHub 仓库
